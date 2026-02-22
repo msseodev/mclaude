@@ -14,7 +14,7 @@ export async function POST() {
 
 export async function DELETE() {
   try {
-    runManager.stopQueue();
+    await runManager.stopQueue();
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(
@@ -30,7 +30,7 @@ export async function PATCH(request: NextRequest) {
     const { action } = body;
 
     if (action === 'pause') {
-      runManager.pauseQueue();
+      await runManager.pauseQueue();
       return NextResponse.json({ success: true });
     } else if (action === 'resume') {
       await runManager.resumeQueue();

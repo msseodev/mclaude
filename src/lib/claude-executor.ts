@@ -1,4 +1,6 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execFileSync, ChildProcess } from 'child_process';
+import os from 'os';
+import path from 'path';
 import { StreamParser } from './stream-parser';
 import { RateLimitDetector } from './rate-limit-detector';
 import type { ClaudeEvent, SSEEvent, RateLimitInfo } from './types';
@@ -9,6 +11,7 @@ export class ClaudeExecutor {
   private rateLimitDetector: RateLimitDetector;
   private killed: boolean = false;
   private accumulatedOutput: string = '';
+  private accumulatedStderr: string = '';
   private lastCostUsd: number | null = null;
   private lastDurationMs: number | null = null;
   private inToolUse: boolean = false;
@@ -25,13 +28,28 @@ export class ClaudeExecutor {
     this.rateLimitDetector = new RateLimitDetector();
   }
 
+  private resolveBinary(binary: string): string {
+    if (path.isAbsolute(binary)) return binary;
+    try {
+      return execFileSync('which', [binary], { encoding: 'utf-8' }).trim();
+    } catch {
+      throw new Error(`Claude binary '${binary}' not found in PATH. Please set the absolute path in Settings.`);
+    }
+  }
+
   execute(promptContent: string, workingDirectory: string): void {
     this.killed = false;
     this.accumulatedOutput = '';
+    this.accumulatedStderr = '';
     this.lastCostUsd = null;
     this.lastDurationMs = null;
     this.inToolUse = false;
     this.hasReceivedStreamingDeltas = false;
+
+    const resolvedBinary = this.resolveBinary(this.claudeBinary);
+    const resolvedCwd = workingDirectory.startsWith('~')
+      ? path.join(os.homedir(), workingDirectory.slice(1))
+      : workingDirectory;
 
     const args = [
       '-p', promptContent,
@@ -47,8 +65,8 @@ export class ClaudeExecutor {
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_ENTRYPOINT;
 
-    this.process = spawn(this.claudeBinary, args, {
-      cwd: workingDirectory,
+    this.process = spawn(resolvedBinary, args, {
+      cwd: resolvedCwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -62,8 +80,9 @@ export class ClaudeExecutor {
     });
 
     this.process.stderr?.on('data', (data: Buffer) => {
-      // Log stderr for debugging but don't treat as output
-      console.error(`[claude-executor stderr] ${data.toString().trim()}`);
+      const text = data.toString();
+      this.accumulatedStderr += text;
+      console.error(`[claude-executor stderr] ${text.trim()}`);
     });
 
     this.process.on('close', (code: number | null) => {
@@ -82,18 +101,29 @@ export class ClaudeExecutor {
         return;
       }
 
-      // Check accumulated output text for rate limit patterns
-      const textCheck = this.rateLimitDetector.checkText(this.accumulatedOutput);
-      if (textCheck.detected) {
-        this.onRateLimit(textCheck);
-        return;
+      const isError = code !== null && code !== 0;
+
+      // Only check text patterns for rate limit on non-zero exit to avoid false positives
+      if (isError) {
+        const textCheck = this.rateLimitDetector.checkText(this.accumulatedOutput + this.accumulatedStderr);
+        if (textCheck.detected) {
+          this.onRateLimit(textCheck);
+          return;
+        }
       }
 
-      const isError = code !== null && code !== 0;
+      // Include stderr in output when there's an error for debugging
+      let output = this.accumulatedOutput;
+      if (isError && this.accumulatedStderr) {
+        output = output
+          ? `${output}\n\n[stderr]\n${this.accumulatedStderr}`
+          : `[stderr]\n${this.accumulatedStderr}`;
+      }
+
       this.onComplete({
         cost_usd: this.lastCostUsd,
         duration_ms: this.lastDurationMs,
-        output: this.accumulatedOutput,
+        output,
         isError,
       });
     });
