@@ -401,7 +401,7 @@ class RunManagerImpl {
   getStatus(): RunStatus {
     const allPrompts = getPrompts();
     const completedCount = allPrompts.filter(p => p.status === 'completed').length;
-    const totalCount = allPrompts.length;
+    const totalCount = allPrompts.filter(p => p.status !== 'skipped').length;
 
     let status: SessionStatus = 'idle';
     let currentPromptId: string | null = null;

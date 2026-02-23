@@ -112,9 +112,28 @@ function getNextPendingPrompt() {
   return db.prepare("SELECT * FROM prompts WHERE status = 'pending' ORDER BY queue_order ASC LIMIT 1").get() as Record<string, unknown> | undefined;
 }
 
-function resetPromptStatuses() {
+function resetPromptStatuses(startFromOrder?: number) {
   const now = new Date().toISOString();
-  db.prepare("UPDATE prompts SET status = 'pending', updated_at = ? WHERE status != 'pending'").run(now);
+  if (startFromOrder !== undefined) {
+    const transaction = db.transaction(() => {
+      db.prepare(
+        "UPDATE prompts SET status = 'skipped', updated_at = ? WHERE queue_order < ?"
+      ).run(now, startFromOrder);
+      db.prepare(
+        "UPDATE prompts SET status = 'pending', updated_at = ? WHERE queue_order >= ?"
+      ).run(now, startFromOrder);
+    });
+    transaction();
+  } else {
+    db.prepare("UPDATE prompts SET status = 'pending', updated_at = ? WHERE status != 'pending'").run(now);
+  }
+}
+
+function getProgressCounts() {
+  const allPrompts = getPrompts();
+  const completedCount = allPrompts.filter(p => p.status === 'completed').length;
+  const totalCount = allPrompts.filter(p => p.status !== 'skipped').length;
+  return { completedCount, totalCount };
 }
 
 function createSession() {
@@ -321,6 +340,104 @@ describe('Database Operations', () => {
 
       const prompts = getPrompts();
       expect(prompts.every(p => p.status === 'pending')).toBe(true);
+    });
+
+    it('should mark earlier prompts as skipped when starting from a specific order', () => {
+      createPrompt('P1', 'C1'); // queue_order 0
+      createPrompt('P2', 'C2'); // queue_order 1
+      createPrompt('P3', 'C3'); // queue_order 2
+      createPrompt('P4', 'C4'); // queue_order 3
+
+      resetPromptStatuses(2); // start from P3
+
+      const prompts = getPrompts();
+      expect(prompts[0].status).toBe('skipped');
+      expect(prompts[1].status).toBe('skipped');
+      expect(prompts[2].status).toBe('pending');
+      expect(prompts[3].status).toBe('pending');
+    });
+
+    it('should mark all prompts as pending when starting from order 0', () => {
+      createPrompt('P1', 'C1');
+      createPrompt('P2', 'C2');
+      createPrompt('P3', 'C3');
+
+      resetPromptStatuses(0);
+
+      const prompts = getPrompts();
+      expect(prompts.every(p => p.status === 'pending')).toBe(true);
+    });
+  });
+
+  describe('Progress Calculation with Skipped Prompts', () => {
+    it('should exclude skipped prompts from totalCount', () => {
+      createPrompt('P1', 'C1'); // queue_order 0
+      createPrompt('P2', 'C2'); // queue_order 1
+      createPrompt('P3', 'C3'); // queue_order 2
+      createPrompt('P4', 'C4'); // queue_order 3
+
+      resetPromptStatuses(2); // skip P1, P2
+
+      const { completedCount, totalCount } = getProgressCounts();
+      expect(totalCount).toBe(2); // only P3, P4 (pending)
+      expect(completedCount).toBe(0);
+    });
+
+    it('should show correct progress after completing some prompts', () => {
+      const p1 = createPrompt('P1', 'C1'); // queue_order 0
+      createPrompt('P2', 'C2'); // queue_order 1
+      const p3 = createPrompt('P3', 'C3'); // queue_order 2
+      createPrompt('P4', 'C4'); // queue_order 3
+
+      resetPromptStatuses(2); // skip P1, P2
+      updatePrompt(p3.id as string, { status: 'completed' });
+
+      const { completedCount, totalCount } = getProgressCounts();
+      expect(totalCount).toBe(2);
+      expect(completedCount).toBe(1);
+    });
+
+    it('should show 100% when all non-skipped prompts are completed', () => {
+      createPrompt('P1', 'C1'); // queue_order 0
+      createPrompt('P2', 'C2'); // queue_order 1
+      const p3 = createPrompt('P3', 'C3'); // queue_order 2
+      const p4 = createPrompt('P4', 'C4'); // queue_order 3
+
+      resetPromptStatuses(2); // skip P1, P2
+      updatePrompt(p3.id as string, { status: 'completed' });
+      updatePrompt(p4.id as string, { status: 'completed' });
+
+      const { completedCount, totalCount } = getProgressCounts();
+      expect(totalCount).toBe(2);
+      expect(completedCount).toBe(2);
+      expect(Math.round((completedCount / totalCount) * 100)).toBe(100);
+    });
+
+    it('should count all prompts when no prompts are skipped', () => {
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+      const p3 = createPrompt('P3', 'C3');
+
+      updatePrompt(p1.id as string, { status: 'completed' });
+      updatePrompt(p2.id as string, { status: 'completed' });
+
+      const { completedCount, totalCount } = getProgressCounts();
+      expect(totalCount).toBe(3);
+      expect(completedCount).toBe(2);
+    });
+
+    it('should not count failed prompts as completed but include in total', () => {
+      createPrompt('P1', 'C1'); // queue_order 0
+      const p2 = createPrompt('P2', 'C2'); // queue_order 1
+      const p3 = createPrompt('P3', 'C3'); // queue_order 2
+
+      resetPromptStatuses(1); // skip P1
+      updatePrompt(p2.id as string, { status: 'completed' });
+      updatePrompt(p3.id as string, { status: 'failed' });
+
+      const { completedCount, totalCount } = getProgressCounts();
+      expect(totalCount).toBe(2); // P2 + P3 (failed still counts in total)
+      expect(completedCount).toBe(1); // only P2
     });
   });
 
