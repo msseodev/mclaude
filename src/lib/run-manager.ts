@@ -53,7 +53,7 @@ class RunManagerImpl {
     }
   }
 
-  async startQueue(): Promise<void> {
+  async startQueue(startFromPromptId?: string): Promise<void> {
     // Guard against starting a queue while one is already running
     if (this.executor?.isRunning()) {
       throw new Error('Queue is already running');
@@ -62,8 +62,16 @@ class RunManagerImpl {
       await this.stopQueue();
     }
 
-    // Reset any prompts that were left in running/failed state
-    resetPromptStatuses();
+    // Reset prompt statuses, optionally starting from a specific prompt
+    if (startFromPromptId) {
+      const targetPrompt = getPrompt(startFromPromptId);
+      if (!targetPrompt) {
+        throw new Error('Prompt not found');
+      }
+      resetPromptStatuses(targetPrompt.queue_order);
+    } else {
+      resetPromptStatuses();
+    }
 
     const prompts = getPrompts().filter(p => p.status === 'pending');
     if (prompts.length === 0) {

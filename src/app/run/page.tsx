@@ -7,12 +7,27 @@ import { Button } from '@/components/ui/Button';
 import { Badge, statusBadgeVariant } from '@/components/ui/Badge';
 import type { SSEEvent, SessionStatus } from '@/types';
 
+interface PromptOption {
+  id: string;
+  title: string;
+}
+
 export default function RunPage() {
   const { status, refresh } = useRunStatus();
   const [output, setOutput] = useState<Array<{ type: string; text: string }>>([]);
   const [actionLoading, setActionLoading] = useState(false);
+  const [prompts, setPrompts] = useState<PromptOption[]>([]);
+  const [startFromPromptId, setStartFromPromptId] = useState<string>('');
 
   const sessionStatus: SessionStatus = status?.status ?? 'idle';
+
+  // Fetch prompts for the "start from" selector
+  useEffect(() => {
+    fetch('/api/prompts')
+      .then(r => r.json())
+      .then((data: PromptOption[]) => setPrompts(data))
+      .catch(() => {});
+  }, []);
 
   const handleSSEEvent = useCallback(
     (event: SSEEvent) => {
@@ -77,7 +92,13 @@ export default function RunPage() {
     setActionLoading(true);
     setOutput([]);
     try {
-      await fetch('/api/run', { method: 'POST' });
+      await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          startFromPromptId ? { startFromPromptId } : {}
+        ),
+      });
       await refresh();
     } finally {
       setActionLoading(false);
@@ -144,6 +165,9 @@ export default function RunPage() {
           onStop={handleStop}
           onPause={handlePause}
           onResume={handleResume}
+          prompts={prompts}
+          startFromPromptId={startFromPromptId}
+          onStartFromChange={setStartFromPromptId}
         />
       </div>
 
@@ -179,6 +203,9 @@ function RunControls({
   onStop,
   onPause,
   onResume,
+  prompts,
+  startFromPromptId,
+  onStartFromChange,
 }: {
   status: SessionStatus;
   loading: boolean;
@@ -186,13 +213,32 @@ function RunControls({
   onStop: () => void;
   onPause: () => void;
   onResume: () => void;
+  prompts: PromptOption[];
+  startFromPromptId: string;
+  onStartFromChange: (id: string) => void;
 }) {
+  const canStart = status === 'idle' || status === 'completed' || status === 'stopped';
+
   return (
-    <div className="flex gap-2">
-      {(status === 'idle' || status === 'completed' || status === 'stopped') && (
-        <Button onClick={onStart} loading={loading} variant="success">
-          Start
-        </Button>
+    <div className="flex items-center gap-2">
+      {canStart && (
+        <>
+          <select
+            value={startFromPromptId}
+            onChange={(e) => onStartFromChange(e.target.value)}
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">All prompts</option>
+            {prompts.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.title}
+              </option>
+            ))}
+          </select>
+          <Button onClick={onStart} loading={loading} variant="success">
+            Start
+          </Button>
+        </>
       )}
       {status === 'running' && (
         <>

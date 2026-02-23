@@ -137,12 +137,24 @@ export function getNextPendingPrompt(): Prompt | undefined {
   ).get() as Prompt | undefined;
 }
 
-export function resetPromptStatuses(): void {
+export function resetPromptStatuses(startFromOrder?: number): void {
   const db = getDb();
   const now = new Date().toISOString();
-  db.prepare(
-    "UPDATE prompts SET status = 'pending', updated_at = ? WHERE status != 'pending'"
-  ).run(now);
+  if (startFromOrder !== undefined) {
+    const transaction = db.transaction(() => {
+      db.prepare(
+        "UPDATE prompts SET status = 'skipped', updated_at = ? WHERE queue_order < ?"
+      ).run(now, startFromOrder);
+      db.prepare(
+        "UPDATE prompts SET status = 'pending', updated_at = ? WHERE queue_order >= ?"
+      ).run(now, startFromOrder);
+    });
+    transaction();
+  } else {
+    db.prepare(
+      "UPDATE prompts SET status = 'pending', updated_at = ? WHERE status != 'pending'"
+    ).run(now);
+  }
 }
 
 // --- Run Session helpers ---

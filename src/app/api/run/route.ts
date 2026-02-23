@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runManager } from '@/lib/run-manager';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    await runManager.startQueue();
+    let startFromPromptId: string | undefined;
+    try {
+      const body = await request.json();
+      startFromPromptId = body.startFromPromptId;
+    } catch {
+      // No body or invalid JSON is fine — start from beginning
+    }
+    await runManager.startQueue(startFromPromptId);
     const status = runManager.getStatus();
     return NextResponse.json(status);
   } catch (error) {
