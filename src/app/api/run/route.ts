@@ -3,14 +3,18 @@ import { runManager } from '@/lib/run-manager';
 
 export async function POST(request: NextRequest) {
   try {
-    let startFromPromptId: string | undefined;
+    let options: { planId?: string; startFromPlanItemId?: string; startFromPromptId?: string } = {};
     try {
       const body = await request.json();
-      startFromPromptId = body.startFromPromptId;
+      options = {
+        planId: body.planId,
+        startFromPlanItemId: body.startFromPlanItemId,
+        startFromPromptId: body.startFromPromptId,
+      };
     } catch {
       // No body or invalid JSON is fine — start from beginning
     }
-    await runManager.startQueue(startFromPromptId);
+    await runManager.startQueue(options);
     const status = runManager.getStatus();
     return NextResponse.json(status);
   } catch (error) {

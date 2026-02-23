@@ -8,6 +8,7 @@ export default function SettingsPage() {
   const [form, setForm] = useState<Settings>({
     working_directory: '',
     claude_binary: 'claude',
+    global_prompt: '',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -87,6 +88,25 @@ export default function SettingsPage() {
             />
             <p className="mt-1 text-xs text-gray-500">
               Path to the Claude CLI binary.
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Global Prompt
+            </label>
+            <textarea
+              value={form.global_prompt}
+              onChange={(e) =>
+                setForm({ ...form, global_prompt: e.target.value })
+              }
+              rows={4}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Text to prepend to every prompt execution..."
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              This text is prepended to every prompt when running a plan. Useful for
+              shared context or instructions.
             </p>
           </div>
         </div>

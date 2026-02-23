@@ -1,33 +1,86 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { Suspense, useState, useCallback, useRef, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useSSE } from '@/hooks/useSSE';
 import { useRunStatus } from '@/hooks/useRunStatus';
 import { Button } from '@/components/ui/Button';
 import { Badge, statusBadgeVariant } from '@/components/ui/Badge';
-import type { SSEEvent, SessionStatus } from '@/types';
+import type { SSEEvent, SessionStatus, Plan, PlanWithItems } from '@/types';
 
 interface PromptOption {
   id: string;
   title: string;
 }
 
+interface PlanItemOption {
+  id: string;
+  prompt_title?: string;
+  item_order: number;
+}
+
 export default function RunPage() {
+  return (
+    <Suspense fallback={<div className="p-6"><p className="text-sm text-gray-500">Loading...</p></div>}>
+      <RunPageContent />
+    </Suspense>
+  );
+}
+
+function RunPageContent() {
+  const searchParams = useSearchParams();
   const { status, refresh } = useRunStatus();
   const [output, setOutput] = useState<Array<{ type: string; text: string }>>([]);
   const [actionLoading, setActionLoading] = useState(false);
   const [prompts, setPrompts] = useState<PromptOption[]>([]);
   const [startFromPromptId, setStartFromPromptId] = useState<string>('');
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
+  const [planItems, setPlanItems] = useState<PlanItemOption[]>([]);
+  const [startFromPlanItemId, setStartFromPlanItemId] = useState<string>('');
 
   const sessionStatus: SessionStatus = status?.status ?? 'idle';
 
-  // Fetch prompts for the "start from" selector
+  // Read planId from URL search params
+  useEffect(() => {
+    const urlPlanId = searchParams.get('planId');
+    if (urlPlanId) {
+      setSelectedPlanId(urlPlanId);
+    }
+  }, [searchParams]);
+
+  // Fetch prompts and plans
   useEffect(() => {
     fetch('/api/prompts')
       .then(r => r.json())
       .then((data: PromptOption[]) => setPrompts(data))
       .catch(() => {});
+    fetch('/api/plans')
+      .then(r => r.json())
+      .then((data: Plan[]) => setPlans(data))
+      .catch(() => {});
   }, []);
+
+  // Fetch plan items when plan is selected
+  useEffect(() => {
+    if (!selectedPlanId) {
+      setPlanItems([]);
+      setStartFromPlanItemId('');
+      return;
+    }
+    fetch(`/api/plans/${selectedPlanId}`)
+      .then(r => r.json())
+      .then((data: PlanWithItems) => {
+        setPlanItems(
+          data.items.map(i => ({
+            id: i.id,
+            prompt_title: i.prompt_title,
+            item_order: i.item_order,
+          }))
+        );
+      })
+      .catch(() => {});
+  }, [selectedPlanId]);
 
   const handleSSEEvent = useCallback(
     (event: SSEEvent) => {
@@ -92,12 +145,19 @@ export default function RunPage() {
     setActionLoading(true);
     setOutput([]);
     try {
+      const body: Record<string, string> = {};
+      if (selectedPlanId) {
+        body.planId = selectedPlanId;
+        if (startFromPlanItemId) {
+          body.startFromPlanItemId = startFromPlanItemId;
+        }
+      } else if (startFromPromptId) {
+        body.startFromPromptId = startFromPromptId;
+      }
       await fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          startFromPromptId ? { startFromPromptId } : {}
-        ),
+        body: JSON.stringify(body),
       });
       await refresh();
     } finally {
@@ -168,6 +228,12 @@ export default function RunPage() {
           prompts={prompts}
           startFromPromptId={startFromPromptId}
           onStartFromChange={setStartFromPromptId}
+          plans={plans}
+          selectedPlanId={selectedPlanId}
+          onPlanChange={setSelectedPlanId}
+          planItems={planItems}
+          startFromPlanItemId={startFromPlanItemId}
+          onStartFromPlanItemChange={setStartFromPlanItemId}
         />
       </div>
 
@@ -177,6 +243,7 @@ export default function RunPage() {
           completed={status.completedCount}
           total={status.totalCount}
           currentTitle={status.currentPromptTitle}
+          planName={status.planName}
         />
       )}
 
@@ -206,6 +273,12 @@ function RunControls({
   prompts,
   startFromPromptId,
   onStartFromChange,
+  plans,
+  selectedPlanId,
+  onPlanChange,
+  planItems,
+  startFromPlanItemId,
+  onStartFromPlanItemChange,
 }: {
   status: SessionStatus;
   loading: boolean;
@@ -216,6 +289,12 @@ function RunControls({
   prompts: PromptOption[];
   startFromPromptId: string;
   onStartFromChange: (id: string) => void;
+  plans: Plan[];
+  selectedPlanId: string;
+  onPlanChange: (id: string) => void;
+  planItems: PlanItemOption[];
+  startFromPlanItemId: string;
+  onStartFromPlanItemChange: (id: string) => void;
 }) {
   const canStart = status === 'idle' || status === 'completed' || status === 'stopped';
 
@@ -224,17 +303,44 @@ function RunControls({
       {canStart && (
         <>
           <select
-            value={startFromPromptId}
-            onChange={(e) => onStartFromChange(e.target.value)}
+            value={selectedPlanId}
+            onChange={(e) => onPlanChange(e.target.value)}
             className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           >
-            <option value="">All prompts</option>
-            {prompts.map((p) => (
+            <option value="">No plan (all prompts)</option>
+            {plans.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.title}
+                {p.name}
               </option>
             ))}
           </select>
+          {selectedPlanId ? (
+            <select
+              value={startFromPlanItemId}
+              onChange={(e) => onStartFromPlanItemChange(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="">From beginning</option>
+              {planItems.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.prompt_title ?? `Item ${item.item_order + 1}`}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={startFromPromptId}
+              onChange={(e) => onStartFromChange(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="">All prompts</option>
+              {prompts.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                </option>
+              ))}
+            </select>
+          )}
           <Button onClick={onStart} loading={loading} variant="success">
             Start
           </Button>
@@ -275,15 +381,22 @@ function PromptProgress({
   completed,
   total,
   currentTitle,
+  planName,
 }: {
   completed: number;
   total: number;
   currentTitle: string | null;
+  planName?: string | null;
 }) {
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   return (
     <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4">
+      {planName && (
+        <p className="mb-2 text-xs font-medium text-blue-600">
+          Plan: {planName}
+        </p>
+      )}
       <div className="mb-2 flex items-center justify-between text-sm">
         <span className="text-gray-700">
           Completed {completed} of {total} prompts

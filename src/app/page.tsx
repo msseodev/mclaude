@@ -55,6 +55,9 @@ export default function DashboardPage() {
 
         {status && sessionStatus !== 'idle' && (
           <div className="mb-4 text-sm text-gray-600">
+            {status.planName && (
+              <p className="font-medium text-blue-600">Plan: {status.planName}</p>
+            )}
             <p>
               Progress: {status.completedCount} / {status.totalCount} prompts
             </p>
@@ -77,6 +80,9 @@ export default function DashboardPage() {
           )}
           <Link href="/prompts">
             <Button variant="secondary">Manage Prompts</Button>
+          </Link>
+          <Link href="/plans">
+            <Button variant="secondary">Manage Plans</Button>
           </Link>
         </div>
       </div>

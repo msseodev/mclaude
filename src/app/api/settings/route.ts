@@ -16,13 +16,16 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { working_directory, claude_binary } = body;
+    const { working_directory, claude_binary, global_prompt } = body;
 
     if (working_directory !== undefined) {
       setSetting('working_directory', working_directory);
     }
     if (claude_binary !== undefined) {
       setSetting('claude_binary', claude_binary);
+    }
+    if (global_prompt !== undefined) {
+      setSetting('global_prompt', global_prompt);
     }
 
     const settings = getAllSettings();

@@ -34,6 +34,7 @@ function initTestDb(): Database.Database {
       id TEXT PRIMARY KEY,
       status TEXT NOT NULL DEFAULT 'idle',
       current_prompt_id TEXT,
+      plan_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -45,6 +46,8 @@ function initTestDb(): Database.Database {
       output TEXT NOT NULL DEFAULT '',
       cost_usd REAL,
       duration_ms INTEGER,
+      plan_id TEXT,
+      effective_prompt TEXT,
       started_at TEXT NOT NULL,
       completed_at TEXT
     );
@@ -52,10 +55,39 @@ function initTestDb(): Database.Database {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS plans (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      plan_prompt TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS plan_items (
+      id TEXT PRIMARY KEY,
+      plan_id TEXT NOT NULL,
+      prompt_id TEXT NOT NULL,
+      item_order INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE,
+      FOREIGN KEY (prompt_id) REFERENCES prompts(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS plan_item_runs (
+      id TEXT PRIMARY KEY,
+      run_session_id TEXT NOT NULL,
+      plan_item_id TEXT NOT NULL,
+      prompt_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (run_session_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (plan_item_id) REFERENCES plan_items(id) ON DELETE CASCADE
+    );
   `);
 
   d.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run('working_directory', process.cwd());
   d.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run('claude_binary', 'claude');
+  d.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run('global_prompt', '');
 
   return d;
 }
@@ -136,10 +168,10 @@ function getProgressCounts() {
   return { completedCount, totalCount };
 }
 
-function createSession() {
+function createSession(planId?: string) {
   const id = uuidv4();
   const now = new Date().toISOString();
-  db.prepare('INSERT INTO run_sessions (id, status, current_prompt_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, 'idle', null, now, now);
+  db.prepare('INSERT INTO run_sessions (id, status, current_prompt_id, plan_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'idle', null, planId ?? null, now, now);
   return getSession(id)!;
 }
 
@@ -197,7 +229,143 @@ function getAllSettings() {
   return {
     working_directory: getSetting('working_directory') ?? process.cwd(),
     claude_binary: getSetting('claude_binary') ?? 'claude',
+    global_prompt: getSetting('global_prompt') ?? '',
   };
+}
+
+// --- Plan helper functions ---
+
+function getPlans() {
+  return db.prepare('SELECT * FROM plans ORDER BY created_at DESC').all() as Array<Record<string, unknown>>;
+}
+
+function getPlan(id: string) {
+  return db.prepare('SELECT * FROM plans WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+}
+
+function createPlan(name: string, description?: string, planPrompt?: string) {
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  db.prepare(
+    'INSERT INTO plans (id, name, description, plan_prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, name, description ?? '', planPrompt ?? '', now, now);
+  return getPlan(id)!;
+}
+
+function updatePlan(id: string, data: Record<string, unknown>) {
+  const existing = getPlan(id);
+  if (!existing) return undefined;
+  const now = new Date().toISOString();
+  const name = data.name ?? existing.name;
+  const description = data.description ?? existing.description;
+  const planPrompt = data.plan_prompt ?? existing.plan_prompt;
+  db.prepare('UPDATE plans SET name = ?, description = ?, plan_prompt = ?, updated_at = ? WHERE id = ?').run(name, description, planPrompt, now, id);
+  return getPlan(id);
+}
+
+function deletePlan(id: string) {
+  const result = db.prepare('DELETE FROM plans WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+function getPlanItems(planId: string) {
+  return db.prepare(
+    `SELECT pi.*, p.title as prompt_title, p.content as prompt_content, p.working_directory as prompt_working_directory
+     FROM plan_items pi
+     LEFT JOIN prompts p ON pi.prompt_id = p.id
+     WHERE pi.plan_id = ?
+     ORDER BY pi.item_order ASC`
+  ).all(planId) as Array<Record<string, unknown>>;
+}
+
+function addPlanItem(planId: string, promptId: string) {
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  const maxOrder = db.prepare(
+    'SELECT COALESCE(MAX(item_order), -1) as max_order FROM plan_items WHERE plan_id = ?'
+  ).get(planId) as { max_order: number };
+  const itemOrder = maxOrder.max_order + 1;
+  db.prepare(
+    'INSERT INTO plan_items (id, plan_id, prompt_id, item_order, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, planId, promptId, itemOrder, now);
+  return db.prepare(
+    `SELECT pi.*, p.title as prompt_title, p.content as prompt_content
+     FROM plan_items pi
+     LEFT JOIN prompts p ON pi.prompt_id = p.id
+     WHERE pi.id = ?`
+  ).get(id) as Record<string, unknown>;
+}
+
+function removePlanItem(planItemId: string) {
+  const item = db.prepare('SELECT * FROM plan_items WHERE id = ?').get(planItemId) as Record<string, unknown> | undefined;
+  if (!item) return false;
+  db.prepare('DELETE FROM plan_items WHERE id = ?').run(planItemId);
+  // Reorder remaining
+  const remaining = db.prepare(
+    'SELECT id FROM plan_items WHERE plan_id = ? ORDER BY item_order ASC'
+  ).all(item.plan_id as string) as Array<{ id: string }>;
+  const stmt = db.prepare('UPDATE plan_items SET item_order = ? WHERE id = ?');
+  const transaction = db.transaction(() => {
+    for (let i = 0; i < remaining.length; i++) {
+      stmt.run(i, remaining[i].id);
+    }
+  });
+  transaction();
+  return true;
+}
+
+function reorderPlanItems(planId: string, orderedItemIds: string[]) {
+  const stmt = db.prepare('UPDATE plan_items SET item_order = ? WHERE id = ? AND plan_id = ?');
+  const transaction = db.transaction(() => {
+    for (let i = 0; i < orderedItemIds.length; i++) {
+      stmt.run(i, orderedItemIds[i], planId);
+    }
+  });
+  transaction();
+}
+
+function createPlanItemRuns(sessionId: string, planId: string, startFromItemOrder?: number) {
+  const items = getPlanItems(planId);
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    'INSERT INTO plan_item_runs (id, run_session_id, plan_item_id, prompt_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+  const transaction = db.transaction(() => {
+    for (const item of items) {
+      const status = (startFromItemOrder !== undefined && (item.item_order as number) < startFromItemOrder) ? 'skipped' : 'pending';
+      stmt.run(uuidv4(), sessionId, item.id as string, item.prompt_id as string, status, now, now);
+    }
+  });
+  transaction();
+  return getPlanItemRuns(sessionId);
+}
+
+function getPlanItemRuns(sessionId: string) {
+  return db.prepare(
+    `SELECT pir.*, p.title as prompt_title, pi.item_order
+     FROM plan_item_runs pir
+     LEFT JOIN prompts p ON pir.prompt_id = p.id
+     LEFT JOIN plan_items pi ON pir.plan_item_id = pi.id
+     WHERE pir.run_session_id = ?
+     ORDER BY pi.item_order ASC`
+  ).all(sessionId) as Array<Record<string, unknown>>;
+}
+
+function getNextPendingPlanItemRun(sessionId: string) {
+  return db.prepare(
+    `SELECT pir.*, p.title as prompt_title, pi.item_order
+     FROM plan_item_runs pir
+     LEFT JOIN prompts p ON pir.prompt_id = p.id
+     LEFT JOIN plan_items pi ON pir.plan_item_id = pi.id
+     WHERE pir.run_session_id = ? AND pir.status = 'pending'
+     ORDER BY pi.item_order ASC
+     LIMIT 1`
+  ).get(sessionId) as Record<string, unknown> | undefined;
+}
+
+function updatePlanItemRun(id: string, data: { status: string }) {
+  const now = new Date().toISOString();
+  db.prepare('UPDATE plan_item_runs SET status = ?, updated_at = ? WHERE id = ?').run(data.status, now, id);
 }
 
 describe('Database Operations', () => {
@@ -449,6 +617,13 @@ describe('Database Operations', () => {
       expect(session.current_prompt_id).toBeNull();
     });
 
+    it('should create a session with plan_id', () => {
+      const plan = createPlan('Test Plan');
+      const session = createSession(plan.id as string);
+      expect(session).toBeDefined();
+      expect(session.plan_id).toBe(plan.id);
+    });
+
     it('should update session status', () => {
       const session = createSession();
       const updated = updateSession(session.id as string, { status: 'running' });
@@ -521,6 +696,7 @@ describe('Database Operations', () => {
       const settings = getAllSettings();
       expect(settings.working_directory).toBeDefined();
       expect(settings.claude_binary).toBe('claude');
+      expect(settings.global_prompt).toBe('');
     });
 
     it('should set and get a setting', () => {
@@ -533,6 +709,320 @@ describe('Database Operations', () => {
       setSetting('working_directory', '/new/path');
       const settings = getAllSettings();
       expect(settings.working_directory).toBe('/new/path');
+    });
+
+    it('should set and get global_prompt', () => {
+      setSetting('global_prompt', 'Always respond in JSON');
+      const settings = getAllSettings();
+      expect(settings.global_prompt).toBe('Always respond in JSON');
+    });
+  });
+
+  describe('Plan CRUD', () => {
+    it('should create a plan', () => {
+      const plan = createPlan('My Plan', 'Description', 'Plan prompt');
+      expect(plan).toBeDefined();
+      expect(plan.name).toBe('My Plan');
+      expect(plan.description).toBe('Description');
+      expect(plan.plan_prompt).toBe('Plan prompt');
+    });
+
+    it('should create a plan with defaults', () => {
+      const plan = createPlan('Basic Plan');
+      expect(plan.description).toBe('');
+      expect(plan.plan_prompt).toBe('');
+    });
+
+    it('should get all plans', () => {
+      createPlan('Plan A');
+      createPlan('Plan B');
+      const plans = getPlans();
+      expect(plans).toHaveLength(2);
+    });
+
+    it('should get plan by id', () => {
+      const created = createPlan('Test Plan');
+      const fetched = getPlan(created.id as string);
+      expect(fetched).toBeDefined();
+      expect(fetched!.name).toBe('Test Plan');
+    });
+
+    it('should return undefined for non-existent plan', () => {
+      expect(getPlan('non-existent')).toBeUndefined();
+    });
+
+    it('should update a plan', () => {
+      const plan = createPlan('Original');
+      const updated = updatePlan(plan.id as string, { name: 'Updated', description: 'New desc' });
+      expect(updated!.name).toBe('Updated');
+      expect(updated!.description).toBe('New desc');
+    });
+
+    it('should update plan_prompt', () => {
+      const plan = createPlan('Plan', '', '');
+      const updated = updatePlan(plan.id as string, { plan_prompt: 'New prompt' });
+      expect(updated!.plan_prompt).toBe('New prompt');
+    });
+
+    it('should delete a plan', () => {
+      const plan = createPlan('To Delete');
+      expect(deletePlan(plan.id as string)).toBe(true);
+      expect(getPlan(plan.id as string)).toBeUndefined();
+    });
+
+    it('should return false when deleting non-existent plan', () => {
+      expect(deletePlan('non-existent')).toBe(false);
+    });
+
+    it('should cascade delete plan items when plan is deleted', () => {
+      const plan = createPlan('Plan');
+      const prompt = createPrompt('P1', 'C1');
+      addPlanItem(plan.id as string, prompt.id as string);
+
+      const itemsBefore = getPlanItems(plan.id as string);
+      expect(itemsBefore).toHaveLength(1);
+
+      deletePlan(plan.id as string);
+
+      const itemsAfter = getPlanItems(plan.id as string);
+      expect(itemsAfter).toHaveLength(0);
+    });
+  });
+
+  describe('Plan Items', () => {
+    it('should add a plan item', () => {
+      const plan = createPlan('Plan');
+      const prompt = createPrompt('P1', 'Content');
+      const item = addPlanItem(plan.id as string, prompt.id as string);
+      expect(item).toBeDefined();
+      expect(item.prompt_title).toBe('P1');
+      expect(item.item_order).toBe(0);
+    });
+
+    it('should auto-increment item_order', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+
+      addPlanItem(plan.id as string, p1.id as string);
+      addPlanItem(plan.id as string, p2.id as string);
+
+      const items = getPlanItems(plan.id as string);
+      expect(items).toHaveLength(2);
+      expect(items[0].item_order).toBe(0);
+      expect(items[1].item_order).toBe(1);
+    });
+
+    it('should get plan items with joined prompt data', () => {
+      const plan = createPlan('Plan');
+      const prompt = createPrompt('Title', 'Content body');
+      addPlanItem(plan.id as string, prompt.id as string);
+
+      const items = getPlanItems(plan.id as string);
+      expect(items[0].prompt_title).toBe('Title');
+      expect(items[0].prompt_content).toBe('Content body');
+    });
+
+    it('should remove a plan item and reorder', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+      const p3 = createPrompt('P3', 'C3');
+
+      addPlanItem(plan.id as string, p1.id as string);
+      const item2 = addPlanItem(plan.id as string, p2.id as string);
+      addPlanItem(plan.id as string, p3.id as string);
+
+      removePlanItem(item2.id as string);
+
+      const items = getPlanItems(plan.id as string);
+      expect(items).toHaveLength(2);
+      expect(items[0].prompt_title).toBe('P1');
+      expect(items[0].item_order).toBe(0);
+      expect(items[1].prompt_title).toBe('P3');
+      expect(items[1].item_order).toBe(1);
+    });
+
+    it('should return false when removing non-existent item', () => {
+      expect(removePlanItem('non-existent')).toBe(false);
+    });
+
+    it('should reorder plan items', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+      const p3 = createPrompt('P3', 'C3');
+
+      const i1 = addPlanItem(plan.id as string, p1.id as string);
+      const i2 = addPlanItem(plan.id as string, p2.id as string);
+      const i3 = addPlanItem(plan.id as string, p3.id as string);
+
+      reorderPlanItems(plan.id as string, [i3.id as string, i1.id as string, i2.id as string]);
+
+      const items = getPlanItems(plan.id as string);
+      expect(items[0].prompt_title).toBe('P3');
+      expect(items[1].prompt_title).toBe('P1');
+      expect(items[2].prompt_title).toBe('P2');
+    });
+
+    it('should allow same prompt in plan multiple times', () => {
+      const plan = createPlan('Plan');
+      const prompt = createPrompt('P1', 'C1');
+
+      addPlanItem(plan.id as string, prompt.id as string);
+      addPlanItem(plan.id as string, prompt.id as string);
+
+      const items = getPlanItems(plan.id as string);
+      expect(items).toHaveLength(2);
+    });
+  });
+
+  describe('Plan Item Runs', () => {
+    it('should create plan item runs for all items', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+      const p3 = createPrompt('P3', 'C3');
+
+      addPlanItem(plan.id as string, p1.id as string);
+      addPlanItem(plan.id as string, p2.id as string);
+      addPlanItem(plan.id as string, p3.id as string);
+
+      const session = createSession(plan.id as string);
+      const runs = createPlanItemRuns(session.id as string, plan.id as string);
+
+      expect(runs).toHaveLength(3);
+      expect(runs.every(r => r.status === 'pending')).toBe(true);
+    });
+
+    it('should create plan item runs with skipped items when startFromItemOrder specified', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+      const p3 = createPrompt('P3', 'C3');
+
+      addPlanItem(plan.id as string, p1.id as string);
+      addPlanItem(plan.id as string, p2.id as string);
+      addPlanItem(plan.id as string, p3.id as string);
+
+      const session = createSession(plan.id as string);
+      const runs = createPlanItemRuns(session.id as string, plan.id as string, 1);
+
+      expect(runs).toHaveLength(3);
+      expect(runs[0].status).toBe('skipped');  // item_order 0
+      expect(runs[1].status).toBe('pending');   // item_order 1
+      expect(runs[2].status).toBe('pending');   // item_order 2
+    });
+
+    it('should get next pending plan item run', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+
+      addPlanItem(plan.id as string, p1.id as string);
+      addPlanItem(plan.id as string, p2.id as string);
+
+      const session = createSession(plan.id as string);
+      createPlanItemRuns(session.id as string, plan.id as string);
+
+      const next = getNextPendingPlanItemRun(session.id as string);
+      expect(next).toBeDefined();
+      expect(next!.prompt_title).toBe('P1');
+      expect(next!.item_order).toBe(0);
+    });
+
+    it('should return undefined when no pending plan item runs', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+
+      addPlanItem(plan.id as string, p1.id as string);
+
+      const session = createSession(plan.id as string);
+      const runs = createPlanItemRuns(session.id as string, plan.id as string);
+
+      updatePlanItemRun(runs[0].id as string, { status: 'completed' });
+
+      const next = getNextPendingPlanItemRun(session.id as string);
+      expect(next).toBeUndefined();
+    });
+
+    it('should update plan item run status', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+
+      addPlanItem(plan.id as string, p1.id as string);
+
+      const session = createSession(plan.id as string);
+      const runs = createPlanItemRuns(session.id as string, plan.id as string);
+
+      updatePlanItemRun(runs[0].id as string, { status: 'running' });
+
+      const updatedRuns = getPlanItemRuns(session.id as string);
+      expect(updatedRuns[0].status).toBe('running');
+    });
+
+    it('should get next pending after completing first', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+
+      addPlanItem(plan.id as string, p1.id as string);
+      addPlanItem(plan.id as string, p2.id as string);
+
+      const session = createSession(plan.id as string);
+      const runs = createPlanItemRuns(session.id as string, plan.id as string);
+
+      updatePlanItemRun(runs[0].id as string, { status: 'completed' });
+
+      const next = getNextPendingPlanItemRun(session.id as string);
+      expect(next).toBeDefined();
+      expect(next!.prompt_title).toBe('P2');
+    });
+  });
+
+  describe('Progress with Plans', () => {
+    it('should calculate progress from plan item runs', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+      const p3 = createPrompt('P3', 'C3');
+
+      addPlanItem(plan.id as string, p1.id as string);
+      addPlanItem(plan.id as string, p2.id as string);
+      addPlanItem(plan.id as string, p3.id as string);
+
+      const session = createSession(plan.id as string);
+      const runs = createPlanItemRuns(session.id as string, plan.id as string);
+
+      updatePlanItemRun(runs[0].id as string, { status: 'completed' });
+
+      const allRuns = getPlanItemRuns(session.id as string);
+      const completedCount = allRuns.filter(r => r.status === 'completed').length;
+      const totalCount = allRuns.filter(r => r.status !== 'skipped').length;
+
+      expect(completedCount).toBe(1);
+      expect(totalCount).toBe(3);
+    });
+
+    it('should exclude skipped plan item runs from total', () => {
+      const plan = createPlan('Plan');
+      const p1 = createPrompt('P1', 'C1');
+      const p2 = createPrompt('P2', 'C2');
+      const p3 = createPrompt('P3', 'C3');
+
+      addPlanItem(plan.id as string, p1.id as string);
+      addPlanItem(plan.id as string, p2.id as string);
+      addPlanItem(plan.id as string, p3.id as string);
+
+      const session = createSession(plan.id as string);
+      const runs = createPlanItemRuns(session.id as string, plan.id as string, 1);
+
+      const allRuns = getPlanItemRuns(session.id as string);
+      const completedCount = allRuns.filter(r => r.status === 'completed').length;
+      const totalCount = allRuns.filter(r => r.status !== 'skipped').length;
+
+      expect(completedCount).toBe(0);
+      expect(totalCount).toBe(2); // only items with order >= 1
     });
   });
 });

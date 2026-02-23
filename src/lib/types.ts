@@ -17,6 +17,7 @@ export interface RunSession {
   id: string;
   status: SessionStatus;
   current_prompt_id: string | null;
+  plan_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -32,6 +33,8 @@ export interface Execution {
   started_at: string;
   completed_at: string | null;
   prompt_title?: string;
+  plan_id?: string | null;
+  effective_prompt?: string | null;
 }
 
 // Claude CLI stream-json event types
@@ -115,9 +118,50 @@ export interface RunStatus {
   totalCount: number;
   waitingUntil: string | null;
   retryCount: number;
+  planId: string | null;
+  planName: string | null;
 }
 
 export interface Settings {
   working_directory: string;
   claude_binary: string;
+  global_prompt: string;
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  description: string;
+  plan_prompt: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlanItem {
+  id: string;
+  plan_id: string;
+  prompt_id: string;
+  item_order: number;
+  created_at: string;
+  // Joined fields
+  prompt_title?: string;
+  prompt_content?: string;
+  prompt_working_directory?: string | null;
+}
+
+export interface PlanItemRun {
+  id: string;
+  run_session_id: string;
+  plan_item_id: string;
+  prompt_id: string;
+  status: PromptStatus;
+  created_at: string;
+  updated_at: string;
+  // Joined fields
+  prompt_title?: string;
+  item_order?: number;
+}
+
+export interface PlanWithItems extends Plan {
+  items: PlanItem[];
 }

@@ -7,4 +7,8 @@ export type {
   SSEEvent,
   SSEEventType,
   Settings,
+  Plan,
+  PlanItem,
+  PlanItemRun,
+  PlanWithItems,
 } from '@/lib/types';
