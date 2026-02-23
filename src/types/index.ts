@@ -12,3 +12,21 @@ export type {
   PlanItemRun,
   PlanWithItems,
 } from '@/lib/types';
+
+export type {
+  AutoSessionStatus,
+  AutoCycleStatus,
+  AutoPhase,
+  FindingCategory,
+  FindingPriority,
+  FindingStatus,
+  AutoSession,
+  AutoCycle,
+  AutoFinding,
+  AutoSettings,
+  AutoSSEEvent,
+  AutoSSEEventType,
+  AutoRunStatus,
+  TestResult,
+  ExtractedFinding,
+} from '@/lib/autonomous/types';

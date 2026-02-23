@@ -1,0 +1,310 @@
+import { getDb } from '../db';
+import { v4 as uuidv4 } from 'uuid';
+import type { AutoSession, AutoCycle, AutoFinding, AutoSettings } from './types';
+
+// --- Init ---
+
+export function initAutoTables(): void {
+  const db = getDb();
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auto_sessions (
+      id TEXT PRIMARY KEY,
+      target_project TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      total_cycles INTEGER NOT NULL DEFAULT 0,
+      total_cost_usd REAL NOT NULL DEFAULT 0,
+      config TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_cycles (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      cycle_number INTEGER NOT NULL,
+      phase TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      finding_id TEXT,
+      prompt_used TEXT,
+      output TEXT NOT NULL DEFAULT '',
+      cost_usd REAL,
+      duration_ms INTEGER,
+      git_checkpoint TEXT,
+      test_pass_count INTEGER,
+      test_fail_count INTEGER,
+      test_total_count INTEGER,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      FOREIGN KEY (session_id) REFERENCES auto_sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_findings (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      priority TEXT NOT NULL DEFAULT 'P2',
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      file_path TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      resolved_by_cycle_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES auto_sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
+  // Insert default settings if not exist
+  const insertSetting = db.prepare(
+    'INSERT OR IGNORE INTO auto_settings (key, value) VALUES (?, ?)'
+  );
+  insertSetting.run('target_project', '');
+  insertSetting.run('test_command', 'npm test');
+  insertSetting.run('max_cycles', '0');
+  insertSetting.run('budget_usd', '0');
+  insertSetting.run('discovery_interval', '10');
+  insertSetting.run('review_interval', '5');
+  insertSetting.run('auto_commit', 'true');
+  insertSetting.run('branch_name', 'auto/improvements');
+  insertSetting.run('max_retries', '3');
+  insertSetting.run('max_consecutive_failures', '5');
+}
+
+// Initialize tables on first import
+initAutoTables();
+
+// --- Session CRUD ---
+
+export function createAutoSession(targetProject: string, config?: Record<string, unknown>): AutoSession {
+  const db = getDb();
+  const id = uuidv4();
+  const now = new Date().toISOString();
+
+  db.prepare(
+    'INSERT INTO auto_sessions (id, target_project, status, total_cycles, total_cost_usd, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, targetProject, 'running', 0, 0, config ? JSON.stringify(config) : null, now, now);
+
+  return getAutoSession(id)!;
+}
+
+export function getAutoSession(id: string): AutoSession | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_sessions WHERE id = ?').get(id) as AutoSession | undefined;
+}
+
+export function updateAutoSession(id: string, data: Partial<Pick<AutoSession, 'status' | 'total_cycles' | 'total_cost_usd' | 'config'>>): AutoSession | undefined {
+  const db = getDb();
+  const existing = getAutoSession(id);
+  if (!existing) return undefined;
+
+  const now = new Date().toISOString();
+  const status = data.status ?? existing.status;
+  const totalCycles = data.total_cycles !== undefined ? data.total_cycles : existing.total_cycles;
+  const totalCostUsd = data.total_cost_usd !== undefined ? data.total_cost_usd : existing.total_cost_usd;
+  const config = data.config !== undefined ? data.config : existing.config;
+
+  db.prepare(
+    'UPDATE auto_sessions SET status = ?, total_cycles = ?, total_cost_usd = ?, config = ?, updated_at = ? WHERE id = ?'
+  ).run(status, totalCycles, totalCostUsd, config, now, id);
+
+  return getAutoSession(id);
+}
+
+export function getAutoSessions(limit: number = 20, offset: number = 0): AutoSession[] {
+  const db = getDb();
+  return db.prepare(
+    'SELECT * FROM auto_sessions ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  ).all(limit, offset) as AutoSession[];
+}
+
+export function getLatestAutoSession(): AutoSession | undefined {
+  const db = getDb();
+  return db.prepare(
+    'SELECT * FROM auto_sessions ORDER BY created_at DESC LIMIT 1'
+  ).get() as AutoSession | undefined;
+}
+
+// --- Cycle CRUD ---
+
+export function createAutoCycle(data: {
+  session_id: string;
+  cycle_number: number;
+  phase: string;
+  finding_id?: string | null;
+  prompt_used?: string | null;
+  git_checkpoint?: string | null;
+}): AutoCycle {
+  const db = getDb();
+  const id = uuidv4();
+  const now = new Date().toISOString();
+
+  db.prepare(
+    'INSERT INTO auto_cycles (id, session_id, cycle_number, phase, status, finding_id, prompt_used, output, git_checkpoint, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, data.session_id, data.cycle_number, data.phase, 'running', data.finding_id ?? null, data.prompt_used ?? null, '', data.git_checkpoint ?? null, now);
+
+  return getAutoCycle(id)!;
+}
+
+export function getAutoCycle(id: string): AutoCycle | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_cycles WHERE id = ?').get(id) as AutoCycle | undefined;
+}
+
+export function updateAutoCycle(id: string, data: Partial<Pick<AutoCycle, 'status' | 'output' | 'cost_usd' | 'duration_ms' | 'completed_at' | 'test_pass_count' | 'test_fail_count' | 'test_total_count'>>): AutoCycle | undefined {
+  const db = getDb();
+  const existing = getAutoCycle(id);
+  if (!existing) return undefined;
+
+  const status = data.status ?? existing.status;
+  const output = data.output ?? existing.output;
+  const costUsd = data.cost_usd !== undefined ? data.cost_usd : existing.cost_usd;
+  const durationMs = data.duration_ms !== undefined ? data.duration_ms : existing.duration_ms;
+  const completedAt = data.completed_at !== undefined ? data.completed_at : existing.completed_at;
+  const testPassCount = data.test_pass_count !== undefined ? data.test_pass_count : existing.test_pass_count;
+  const testFailCount = data.test_fail_count !== undefined ? data.test_fail_count : existing.test_fail_count;
+  const testTotalCount = data.test_total_count !== undefined ? data.test_total_count : existing.test_total_count;
+
+  db.prepare(
+    'UPDATE auto_cycles SET status = ?, output = ?, cost_usd = ?, duration_ms = ?, completed_at = ?, test_pass_count = ?, test_fail_count = ?, test_total_count = ? WHERE id = ?'
+  ).run(status, output, costUsd, durationMs, completedAt, testPassCount, testFailCount, testTotalCount, id);
+
+  return getAutoCycle(id);
+}
+
+export function getAutoCyclesBySession(sessionId: string, limit: number = 100, offset: number = 0): AutoCycle[] {
+  const db = getDb();
+  return db.prepare(
+    'SELECT * FROM auto_cycles WHERE session_id = ? ORDER BY cycle_number ASC LIMIT ? OFFSET ?'
+  ).all(sessionId, limit, offset) as AutoCycle[];
+}
+
+// --- Finding CRUD ---
+
+export function createAutoFinding(data: {
+  session_id: string;
+  category: string;
+  priority?: string;
+  title: string;
+  description: string;
+  file_path?: string | null;
+  max_retries?: number;
+}): AutoFinding {
+  const db = getDb();
+  const id = uuidv4();
+  const now = new Date().toISOString();
+
+  db.prepare(
+    'INSERT INTO auto_findings (id, session_id, category, priority, title, description, file_path, status, retry_count, max_retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, data.session_id, data.category, data.priority ?? 'P2', data.title, data.description, data.file_path ?? null, 'open', 0, data.max_retries ?? 3, now, now);
+
+  return getAutoFinding(id)!;
+}
+
+export function getAutoFinding(id: string): AutoFinding | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_findings WHERE id = ?').get(id) as AutoFinding | undefined;
+}
+
+export function updateAutoFinding(id: string, data: Partial<Pick<AutoFinding, 'status' | 'priority' | 'retry_count' | 'resolved_by_cycle_id' | 'description'>>): AutoFinding | undefined {
+  const db = getDb();
+  const existing = getAutoFinding(id);
+  if (!existing) return undefined;
+
+  const now = new Date().toISOString();
+  const status = data.status ?? existing.status;
+  const priority = data.priority ?? existing.priority;
+  const retryCount = data.retry_count !== undefined ? data.retry_count : existing.retry_count;
+  const resolvedByCycleId = data.resolved_by_cycle_id !== undefined ? data.resolved_by_cycle_id : existing.resolved_by_cycle_id;
+  const description = data.description ?? existing.description;
+
+  db.prepare(
+    'UPDATE auto_findings SET status = ?, priority = ?, retry_count = ?, resolved_by_cycle_id = ?, description = ?, updated_at = ? WHERE id = ?'
+  ).run(status, priority, retryCount, resolvedByCycleId, description, now, id);
+
+  return getAutoFinding(id);
+}
+
+export function deleteAutoFinding(id: string): boolean {
+  const db = getDb();
+  const result = db.prepare('DELETE FROM auto_findings WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+export function getAutoFindings(
+  filters?: { status?: string; priority?: string; category?: string; session_id?: string },
+  limit: number = 100,
+  offset: number = 0
+): AutoFinding[] {
+  const db = getDb();
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters?.status) {
+    conditions.push('status = ?');
+    params.push(filters.status);
+  }
+  if (filters?.priority) {
+    conditions.push('priority = ?');
+    params.push(filters.priority);
+  }
+  if (filters?.category) {
+    conditions.push('category = ?');
+    params.push(filters.category);
+  }
+  if (filters?.session_id) {
+    conditions.push('session_id = ?');
+    params.push(filters.session_id);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  params.push(limit, offset);
+
+  return db.prepare(
+    `SELECT * FROM auto_findings ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+  ).all(...params) as AutoFinding[];
+}
+
+export function getOpenAutoFindings(): AutoFinding[] {
+  const db = getDb();
+  return db.prepare(
+    "SELECT * FROM auto_findings WHERE status = 'open' ORDER BY priority ASC, created_at ASC"
+  ).all() as AutoFinding[];
+}
+
+// --- Settings ---
+
+export function getAutoSetting(key: string): string | undefined {
+  const db = getDb();
+  const row = db.prepare('SELECT value FROM auto_settings WHERE key = ?').get(key) as { value: string } | undefined;
+  return row?.value;
+}
+
+export function setAutoSetting(key: string, value: string): void {
+  const db = getDb();
+  db.prepare(
+    'INSERT INTO auto_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?'
+  ).run(key, value, value);
+}
+
+export function getAllAutoSettings(): AutoSettings {
+  return {
+    target_project: getAutoSetting('target_project') ?? '',
+    test_command: getAutoSetting('test_command') ?? 'npm test',
+    max_cycles: Number(getAutoSetting('max_cycles') ?? '0'),
+    budget_usd: Number(getAutoSetting('budget_usd') ?? '0'),
+    discovery_interval: Number(getAutoSetting('discovery_interval') ?? '10'),
+    review_interval: Number(getAutoSetting('review_interval') ?? '5'),
+    auto_commit: getAutoSetting('auto_commit') !== 'false',
+    branch_name: getAutoSetting('branch_name') ?? 'auto/improvements',
+    max_retries: Number(getAutoSetting('max_retries') ?? '3'),
+    max_consecutive_failures: Number(getAutoSetting('max_consecutive_failures') ?? '5'),
+  };
+}

@@ -1,0 +1,39 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getAllAutoSettings, setAutoSetting, initAutoTables } from '@/lib/autonomous/db';
+
+// GET /api/auto/settings
+export async function GET() {
+  try {
+    initAutoTables();
+    const settings = getAllAutoSettings();
+    return NextResponse.json(settings);
+  } catch (error) {
+    return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });
+  }
+}
+
+// PUT /api/auto/settings
+export async function PUT(request: NextRequest) {
+  try {
+    initAutoTables();
+    const body = await request.json();
+
+    // Save each setting
+    const settingKeys = [
+      'target_project', 'test_command', 'max_cycles', 'budget_usd',
+      'discovery_interval', 'review_interval', 'auto_commit', 'branch_name',
+      'max_retries', 'max_consecutive_failures',
+    ];
+
+    for (const key of settingKeys) {
+      if (body[key] !== undefined) {
+        setAutoSetting(key, String(body[key]));
+      }
+    }
+
+    const settings = getAllAutoSettings();
+    return NextResponse.json(settings);
+  } catch (error) {
+    return NextResponse.json({ error: 'Failed to save settings' }, { status: 500 });
+  }
+}
