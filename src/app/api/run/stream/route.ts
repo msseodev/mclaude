@@ -26,6 +26,7 @@ export async function GET() {
             encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
           );
         } catch {
+          if (heartbeat) clearInterval(heartbeat);
           removeListener?.();
         }
       });

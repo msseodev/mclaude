@@ -17,6 +17,13 @@ export async function PUT(
       );
     }
 
+    if (!orderedIds.every((id: unknown) => typeof id === 'string')) {
+      return NextResponse.json(
+        { error: 'orderedIds must contain only strings' },
+        { status: 400 }
+      );
+    }
+
     reorderPlanItems(id, orderedIds);
     return NextResponse.json({ success: true });
   } catch (error) {

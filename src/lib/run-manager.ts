@@ -52,7 +52,7 @@ class RunManagerImpl {
     if (this.eventBuffer.length > EVENT_BUFFER_SIZE) {
       this.eventBuffer = this.eventBuffer.slice(-EVENT_BUFFER_SIZE);
     }
-    for (const listener of this.listeners) {
+    for (const listener of [...this.listeners]) {
       try {
         listener(event);
       } catch {
@@ -67,7 +67,7 @@ class RunManagerImpl {
     startFromPromptId?: string;
   }): Promise<void> {
     // Guard against starting a queue while one is already running
-    if (this.executor?.isRunning()) {
+    if (this.executor?.isRunning() || this.retryTimer) {
       throw new Error('Queue is already running');
     }
     if (this.currentSessionId) {
@@ -141,7 +141,28 @@ class RunManagerImpl {
       timestamp: new Date().toISOString(),
     });
 
-    this.processNextPrompt();
+    this.safeProcessNext();
+  }
+
+  private safeProcessNext(): void {
+    try {
+      this.processNextPrompt();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      if (this.currentSessionId) {
+        updateSession(this.currentSessionId, { status: 'stopped', current_prompt_id: null });
+        this.emit({
+          type: 'error',
+          data: { message: `Queue error: ${message}` },
+          timestamp: new Date().toISOString(),
+        });
+      }
+      this.executor = null;
+      this.currentSessionId = null;
+      this.currentExecutionId = null;
+      this.currentPlanId = null;
+      this.currentPlanItemRunId = null;
+    }
   }
 
   private processNextPrompt(): void {
@@ -250,7 +271,7 @@ class RunManagerImpl {
       // Prompt was deleted, skip this item
       updatePlanItemRun(nextRun.id, { status: 'failed' });
       this.currentPlanItemRunId = null;
-      this.processNextPrompt();
+      this.safeProcessNext();
       return;
     }
 
@@ -371,7 +392,7 @@ class RunManagerImpl {
     this.currentPlanItemRunId = null;
 
     // Process next prompt in queue
-    this.processNextPrompt();
+    this.safeProcessNext();
   }
 
   private handleRateLimit(info: RateLimitInfo): void {
@@ -449,7 +470,7 @@ class RunManagerImpl {
       timestamp: new Date().toISOString(),
     });
 
-    this.processNextPrompt();
+    this.safeProcessNext();
   }
 
   async stopQueue(): Promise<void> {
@@ -566,7 +587,7 @@ class RunManagerImpl {
       timestamp: new Date().toISOString(),
     });
 
-    this.processNextPrompt();
+    this.safeProcessNext();
   }
 
   getStatus(): RunStatus {

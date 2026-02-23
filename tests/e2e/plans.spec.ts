@@ -244,7 +244,7 @@ test.describe('Plans Page', () => {
     // Click the delete button (trash icon)
     await page.locator('button').filter({ has: page.locator('svg path[d*="14.74"]') }).click();
 
-    await expect(page.locator('text=Are you sure you want to delete this plan?')).toBeVisible();
+    await expect(page.locator('text=Are you sure you want to delete "Delete Plan"?')).toBeVisible();
     await page.locator('button:text-is("Delete")').click();
 
     // The plan card text should disappear (only the page title remains)
@@ -401,7 +401,7 @@ test.describe('Settings - Global Prompt', () => {
     await page.fill('textarea[placeholder*="prepend to every prompt"]', 'Use Clean Architecture');
     await page.click('button:has-text("Save Settings")');
 
-    await expect(page.locator('text=Settings saved.')).toBeVisible();
+    await expect(page.locator('text=Settings saved')).toBeVisible();
 
     // Verify via API
     const res = await request.get('/api/settings');

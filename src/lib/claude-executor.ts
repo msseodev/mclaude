@@ -142,6 +142,8 @@ export class ClaudeExecutor {
   }
 
   private processEvent(event: ClaudeEvent): void {
+    if (this.killed) return;
+
     // Check stream event for rate limits
     const rateLimitCheck = this.rateLimitDetector.checkStreamEvent(event);
     if (rateLimitCheck.detected) {

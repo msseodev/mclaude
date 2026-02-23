@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRunStatus } from '@/hooks/useRunStatus';
 import { Button } from '@/components/ui/Button';
@@ -28,19 +28,38 @@ const statusDotColors: Record<string, string> = {
 export default function DashboardPage() {
   const { status, isLoading } = useRunStatus();
   const [recentExecutions, setRecentExecutions] = useState<Execution[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/history');
+      if (!res.ok) throw new Error('Failed to load history');
+      const data: Execution[] = await res.json();
+      setRecentExecutions(data.slice(0, 5));
+      setError(null);
+    } catch {
+      setError('Failed to load recent executions. Please try again.');
+    }
+  }, []);
 
   useEffect(() => {
-    fetch('/api/history')
-      .then((res) => res.json())
-      .then((data: Execution[]) => setRecentExecutions(data.slice(0, 5)))
-      .catch(() => {});
-  }, []);
+    fetchHistory();
+  }, [fetchHistory]);
 
   const sessionStatus = status?.status ?? 'idle';
 
   return (
     <div className="p-6">
       <h1 className="mb-6 text-2xl font-bold text-gray-900">Dashboard</h1>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => { setError(null); fetchHistory(); }} className="font-medium text-red-700 hover:text-red-900 underline">
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Status Card */}
       <div className="mb-6 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">

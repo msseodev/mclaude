@@ -32,7 +32,7 @@ test.describe('Settings Page', () => {
     await binaryInput.fill('claude-test');
 
     await page.click('button:has-text("Save Settings")');
-    await expect(page.locator('text=Settings saved.')).toBeVisible();
+    await expect(page.locator('text=Settings saved')).toBeVisible();
   });
 
   test('should persist saved settings on reload', async ({ page }) => {
@@ -41,14 +41,14 @@ test.describe('Settings Page', () => {
 
     const binaryInput = page.locator('input[placeholder="claude"]');
     await binaryInput.clear();
-    await binaryInput.fill('/usr/local/bin/claude');
+    await binaryInput.fill('claude-custom');
     await page.click('button:has-text("Save Settings")');
-    await expect(page.locator('text=Settings saved.')).toBeVisible();
+    await expect(page.locator('text=Settings saved')).toBeVisible();
 
     // Reload and verify
     await page.reload();
     await page.waitForSelector('input[placeholder="claude"]');
-    await expect(page.locator('input[placeholder="claude"]')).toHaveValue('/usr/local/bin/claude');
+    await expect(page.locator('input[placeholder="claude"]')).toHaveValue('claude-custom');
 
     // Reset back to 'claude'
     await binaryInput.clear();

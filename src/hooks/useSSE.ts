@@ -3,9 +3,10 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { SSEEvent } from '@/types';
 
-export function useSSE(url: string, onEvent: (event: SSEEvent) => void) {
+export function useSSE(url: string, onEvent: (event: SSEEvent) => void, onReconnect?: () => void) {
   const [connected, setConnected] = useState(false);
   const onEventRef = useRef(onEvent);
+  const onReconnectRef = useRef(onReconnect);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -13,16 +14,29 @@ export function useSSE(url: string, onEvent: (event: SSEEvent) => void) {
   }, [onEvent]);
 
   useEffect(() => {
+    onReconnectRef.current = onReconnect;
+  }, [onReconnect]);
+
+  useEffect(() => {
     let es: EventSource | null = null;
     let disposed = false;
+    let hasConnected = false;
 
     function connect() {
       if (disposed) return;
 
+      // Fire onReconnect callback on subsequent connections (not the first)
+      if (hasConnected) {
+        onReconnectRef.current?.();
+      }
+
       es = new EventSource(url);
 
       es.onopen = () => {
-        if (!disposed) setConnected(true);
+        if (!disposed) {
+          setConnected(true);
+          hasConnected = true;
+        }
       };
 
       es.onmessage = (event) => {

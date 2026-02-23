@@ -10,33 +10,37 @@ import {
 } from '@hello-pangea/dnd';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
+import { useToast } from '@/components/ui/Toast';
 import type { PlanWithItems, Prompt } from '@/types';
 
 export default function PlanDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { showToast } = useToast();
   const [plan, setPlan] = useState<PlanWithItems | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', description: '', plan_prompt: '' });
+  const [editFormErrors, setEditFormErrors] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
 
   const fetchPlan = useCallback(async () => {
+    setError(null);
     try {
       const res = await fetch(`/api/plans/${id}`);
-      if (res.ok) {
-        const data: PlanWithItems = await res.json();
-        setPlan(data);
-        setEditForm({
-          name: data.name,
-          description: data.description,
-          plan_prompt: data.plan_prompt,
-        });
-      }
+      if (!res.ok) throw new Error('Failed to load plan');
+      const data: PlanWithItems = await res.json();
+      setPlan(data);
+      setEditForm({
+        name: data.name,
+        description: data.description,
+        plan_prompt: data.plan_prompt,
+      });
     } catch {
-      // ignore
+      setError('Failed to load plan. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -45,12 +49,11 @@ export default function PlanDetailPage() {
   const fetchPrompts = useCallback(async () => {
     try {
       const res = await fetch('/api/prompts');
-      if (res.ok) {
-        const data: Prompt[] = await res.json();
-        setPrompts(data);
-      }
+      if (!res.ok) throw new Error('Failed to load prompts');
+      const data: Prompt[] = await res.json();
+      setPrompts(data);
     } catch {
-      // ignore
+      // Prompts fetch failure is non-critical for this page
     }
   }, []);
 
@@ -60,17 +63,37 @@ export default function PlanDetailPage() {
   }, [fetchPlan, fetchPrompts]);
 
   async function handleAddPrompt(promptId: string) {
-    await fetch(`/api/plans/${id}/items`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt_id: promptId }),
-    });
+    try {
+      const res = await fetch(`/api/plans/${id}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt_id: promptId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to add prompt', 'error');
+        return;
+      }
+      showToast('Prompt added to plan', 'success');
+    } catch {
+      showToast('Failed to add prompt', 'error');
+    }
     setAddModalOpen(false);
     await fetchPlan();
   }
 
   async function handleRemoveItem(itemId: string) {
-    await fetch(`/api/plans/${id}/items/${itemId}`, { method: 'DELETE' });
+    try {
+      const res = await fetch(`/api/plans/${id}/items/${itemId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to remove item', 'error');
+        return;
+      }
+      showToast('Item removed from plan', 'success');
+    } catch {
+      showToast('Failed to remove item', 'error');
+    }
     await fetchPlan();
   }
 
@@ -81,18 +104,32 @@ export default function PlanDetailPage() {
     items.splice(result.destination.index, 0, moved);
     setPlan({ ...plan, items });
 
-    await fetch(`/api/plans/${id}/items/reorder`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderedIds: items.map((i) => i.id) }),
-    });
+    try {
+      const res = await fetch(`/api/plans/${id}/items/reorder`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: items.map((i) => i.id) }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to reorder items', 'error');
+      }
+    } catch {
+      showToast('Failed to reorder items', 'error');
+    }
   }
 
   async function handleEditSave() {
-    if (!editForm.name.trim()) return;
+    const errors: Record<string, boolean> = {};
+    if (!editForm.name.trim()) errors.name = true;
+    if (Object.keys(errors).length > 0) {
+      setEditFormErrors(errors);
+      return;
+    }
+    setEditFormErrors({});
     setSaving(true);
     try {
-      await fetch(`/api/plans/${id}`, {
+      const res = await fetch(`/api/plans/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -101,8 +138,16 @@ export default function PlanDetailPage() {
           plan_prompt: editForm.plan_prompt,
         }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to save plan', 'error');
+        return;
+      }
+      showToast('Plan updated', 'success');
       setEditModalOpen(false);
       await fetchPlan();
+    } catch {
+      showToast('Failed to save plan', 'error');
     } finally {
       setSaving(false);
     }
@@ -119,7 +164,16 @@ export default function PlanDetailPage() {
   if (!plan) {
     return (
       <div className="p-6">
-        <p className="text-sm text-gray-500">Plan not found.</p>
+        {error ? (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => { setError(null); fetchPlan(); }} className="font-medium text-red-700 hover:text-red-900 underline">
+              Retry
+            </button>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">Plan not found.</p>
+        )}
       </div>
     );
   }
@@ -141,7 +195,7 @@ export default function PlanDetailPage() {
             )}
           </div>
           <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setEditModalOpen(true)}>
+            <Button variant="secondary" onClick={() => { setEditFormErrors({}); setEditModalOpen(true); }}>
               Edit Plan
             </Button>
             <Button
@@ -153,6 +207,15 @@ export default function PlanDetailPage() {
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => { setError(null); fetchPlan(); }} className="font-medium text-red-700 hover:text-red-900 underline">
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Plan Prompt */}
       {plan.plan_prompt && (
@@ -232,6 +295,7 @@ export default function PlanDetailPage() {
                           <button
                             onClick={() => handleRemoveItem(item.id)}
                             className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                            aria-label="Remove from plan"
                           >
                             <svg
                               className="h-4 w-4"
@@ -305,24 +369,27 @@ export default function PlanDetailPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="edit-plan-name" className="mb-1 block text-sm font-medium text-gray-700">
               Name
             </label>
             <input
+              id="edit-plan-name"
               type="text"
               value={editForm.name}
               onChange={(e) =>
                 setEditForm({ ...editForm, name: e.target.value })
               }
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${editFormErrors.name ? 'border-red-500' : 'border-gray-300'}`}
               placeholder="Plan name"
             />
+            {editFormErrors.name && <p className="mt-1 text-xs text-red-500">Name is required</p>}
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="edit-plan-description" className="mb-1 block text-sm font-medium text-gray-700">
               Description
             </label>
             <textarea
+              id="edit-plan-description"
               value={editForm.description}
               onChange={(e) =>
                 setEditForm({ ...editForm, description: e.target.value })
@@ -333,10 +400,11 @@ export default function PlanDetailPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="edit-plan-prompt" className="mb-1 block text-sm font-medium text-gray-700">
               Plan Prompt
             </label>
             <textarea
+              id="edit-plan-prompt"
               value={editForm.plan_prompt}
               onChange={(e) =>
                 setEditForm({ ...editForm, plan_prompt: e.target.value })

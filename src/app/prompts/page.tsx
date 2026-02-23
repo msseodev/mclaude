@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Badge, statusBadgeVariant } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
+import { useToast } from '@/components/ui/Toast';
 import type { Prompt } from '@/types';
 
 interface PromptFormData {
@@ -21,23 +22,26 @@ interface PromptFormData {
 const emptyForm: PromptFormData = { title: '', content: '', working_directory: '' };
 
 export default function PromptsPage() {
+  const { showToast } = useToast();
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<PromptFormData>(emptyForm);
+  const [formErrors, setFormErrors] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; title: string } | null>(null);
 
   const fetchPrompts = useCallback(async () => {
+    setError(null);
     try {
       const res = await fetch('/api/prompts');
-      if (res.ok) {
-        const data: Prompt[] = await res.json();
-        setPrompts(data);
-      }
+      if (!res.ok) throw new Error('Failed to load prompts');
+      const data: Prompt[] = await res.json();
+      setPrompts(data);
     } catch {
-      // ignore
+      setError('Failed to load prompts. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -50,6 +54,7 @@ export default function PromptsPage() {
   function openCreate() {
     setEditingId(null);
     setForm(emptyForm);
+    setFormErrors({});
     setModalOpen(true);
   }
 
@@ -60,11 +65,19 @@ export default function PromptsPage() {
       content: prompt.content,
       working_directory: prompt.working_directory ?? '',
     });
+    setFormErrors({});
     setModalOpen(true);
   }
 
   async function handleSave() {
-    if (!form.title.trim() || !form.content.trim()) return;
+    const errors: Record<string, boolean> = {};
+    if (!form.title.trim()) errors.title = true;
+    if (!form.content.trim()) errors.content = true;
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+    setFormErrors({});
     setSaving(true);
     try {
       const body = {
@@ -73,28 +86,47 @@ export default function PromptsPage() {
         working_directory: form.working_directory.trim() || null,
       };
 
+      let res: Response;
       if (editingId) {
-        await fetch(`/api/prompts/${editingId}`, {
+        res = await fetch(`/api/prompts/${editingId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
       } else {
-        await fetch('/api/prompts', {
+        res = await fetch('/api/prompts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
       }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to save prompt', 'error');
+        return;
+      }
+      showToast(editingId ? 'Prompt updated' : 'Prompt created', 'success');
       setModalOpen(false);
       await fetchPrompts();
+    } catch {
+      showToast('Failed to save prompt', 'error');
     } finally {
       setSaving(false);
     }
   }
 
   async function handleDelete(id: string) {
-    await fetch(`/api/prompts/${id}`, { method: 'DELETE' });
+    try {
+      const res = await fetch(`/api/prompts/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to delete prompt', 'error');
+        return;
+      }
+      showToast('Prompt deleted', 'success');
+    } catch {
+      showToast('Failed to delete prompt', 'error');
+    }
     setDeleteConfirm(null);
     await fetchPrompts();
   }
@@ -106,11 +138,19 @@ export default function PromptsPage() {
     items.splice(result.destination.index, 0, moved);
     setPrompts(items);
 
-    await fetch('/api/prompts/reorder', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderedIds: items.map((p) => p.id) }),
-    });
+    try {
+      const res = await fetch('/api/prompts/reorder', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: items.map((p) => p.id) }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to reorder prompts', 'error');
+      }
+    } catch {
+      showToast('Failed to reorder prompts', 'error');
+    }
   }
 
   return (
@@ -119,6 +159,15 @@ export default function PromptsPage() {
         <h1 className="text-2xl font-bold text-gray-900">Prompt Queue</h1>
         <Button onClick={openCreate}>Add Prompt</Button>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => { setError(null); fetchPrompts(); }} className="font-medium text-red-700 hover:text-red-900 underline">
+            Retry
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="py-12 text-center text-sm text-gray-500">
@@ -194,6 +243,7 @@ export default function PromptsPage() {
                             <button
                               onClick={() => openEdit(prompt)}
                               className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                              aria-label="Edit prompt"
                             >
                               <svg
                                 className="h-4 w-4"
@@ -210,8 +260,9 @@ export default function PromptsPage() {
                               </svg>
                             </button>
                             <button
-                              onClick={() => setDeleteConfirm(prompt.id)}
+                              onClick={() => setDeleteConfirm({ id: prompt.id, title: prompt.title })}
                               className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                              aria-label="Delete prompt"
                             >
                               <svg
                                 className="h-4 w-4"
@@ -258,34 +309,39 @@ export default function PromptsPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="prompt-title" className="mb-1 block text-sm font-medium text-gray-700">
               Title
             </label>
             <input
+              id="prompt-title"
               type="text"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${formErrors.title ? 'border-red-500' : 'border-gray-300'}`}
               placeholder="Prompt title"
             />
+            {formErrors.title && <p className="mt-1 text-xs text-red-500">Title is required</p>}
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="prompt-content" className="mb-1 block text-sm font-medium text-gray-700">
               Content
             </label>
             <textarea
+              id="prompt-content"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
               rows={6}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${formErrors.content ? 'border-red-500' : 'border-gray-300'}`}
               placeholder="Prompt content..."
             />
+            {formErrors.content && <p className="mt-1 text-xs text-red-500">Content is required</p>}
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="prompt-working-dir" className="mb-1 block text-sm font-medium text-gray-700">
               Working Directory (optional)
             </label>
             <input
+              id="prompt-working-dir"
               type="text"
               value={form.working_directory}
               onChange={(e) =>
@@ -310,7 +366,7 @@ export default function PromptsPage() {
             </Button>
             <Button
               variant="danger"
-              onClick={() => deleteConfirm && handleDelete(deleteConfirm)}
+              onClick={() => deleteConfirm && handleDelete(deleteConfirm.id)}
             >
               Delete
             </Button>
@@ -318,7 +374,7 @@ export default function PromptsPage() {
         }
       >
         <p className="text-sm text-gray-600">
-          Are you sure you want to delete this prompt? This action cannot be
+          Are you sure you want to delete &quot;{deleteConfirm?.title}&quot;? This action cannot be
           undone.
         </p>
       </Modal>

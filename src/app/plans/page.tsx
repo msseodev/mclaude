@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
+import { useToast } from '@/components/ui/Toast';
 import type { Plan } from '@/types';
 
 interface PlanFormData {
@@ -15,22 +16,25 @@ const emptyForm: PlanFormData = { name: '', description: '' };
 
 export default function PlansPage() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<PlanFormData>(emptyForm);
+  const [formErrors, setFormErrors] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
 
   const fetchPlans = useCallback(async () => {
+    setError(null);
     try {
       const res = await fetch('/api/plans');
-      if (res.ok) {
-        const data: Plan[] = await res.json();
-        setPlans(data);
-      }
+      if (!res.ok) throw new Error('Failed to load plans');
+      const data: Plan[] = await res.json();
+      setPlans(data);
     } catch {
-      // ignore
+      setError('Failed to load plans. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -42,14 +46,21 @@ export default function PlansPage() {
 
   function openCreate() {
     setForm(emptyForm);
+    setFormErrors({});
     setModalOpen(true);
   }
 
   async function handleSave() {
-    if (!form.name.trim()) return;
+    const errors: Record<string, boolean> = {};
+    if (!form.name.trim()) errors.name = true;
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+    setFormErrors({});
     setSaving(true);
     try {
-      await fetch('/api/plans', {
+      const res = await fetch('/api/plans', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -57,15 +68,33 @@ export default function PlansPage() {
           description: form.description.trim(),
         }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to create plan', 'error');
+        return;
+      }
+      showToast('Plan created', 'success');
       setModalOpen(false);
       await fetchPlans();
+    } catch {
+      showToast('Failed to create plan', 'error');
     } finally {
       setSaving(false);
     }
   }
 
   async function handleDelete(id: string) {
-    await fetch(`/api/plans/${id}`, { method: 'DELETE' });
+    try {
+      const res = await fetch(`/api/plans/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to delete plan', 'error');
+        return;
+      }
+      showToast('Plan deleted', 'success');
+    } catch {
+      showToast('Failed to delete plan', 'error');
+    }
     setDeleteConfirm(null);
     await fetchPlans();
   }
@@ -76,6 +105,15 @@ export default function PlansPage() {
         <h1 className="text-2xl font-bold text-gray-900">Execution Plans</h1>
         <Button onClick={openCreate}>Create Plan</Button>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => { setError(null); fetchPlans(); }} className="font-medium text-red-700 hover:text-red-900 underline">
+            Retry
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="py-12 text-center text-sm text-gray-500">
@@ -113,6 +151,7 @@ export default function PlansPage() {
                   <button
                     onClick={() => router.push(`/plans/${plan.id}`)}
                     className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                    aria-label="Edit plan"
                   >
                     <svg
                       className="h-4 w-4"
@@ -129,8 +168,9 @@ export default function PlansPage() {
                     </svg>
                   </button>
                   <button
-                    onClick={() => setDeleteConfirm(plan.id)}
+                    onClick={() => setDeleteConfirm({ id: plan.id, name: plan.name })}
                     className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                    aria-label="Delete plan"
                   >
                     <svg
                       className="h-4 w-4"
@@ -171,22 +211,25 @@ export default function PlansPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="plan-name" className="mb-1 block text-sm font-medium text-gray-700">
               Name
             </label>
             <input
+              id="plan-name"
               type="text"
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${formErrors.name ? 'border-red-500' : 'border-gray-300'}`}
               placeholder="Plan name"
             />
+            {formErrors.name && <p className="mt-1 text-xs text-red-500">Name is required</p>}
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="plan-description" className="mb-1 block text-sm font-medium text-gray-700">
               Description (optional)
             </label>
             <textarea
+              id="plan-description"
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={3}
@@ -209,7 +252,7 @@ export default function PlansPage() {
             </Button>
             <Button
               variant="danger"
-              onClick={() => deleteConfirm && handleDelete(deleteConfirm)}
+              onClick={() => deleteConfirm && handleDelete(deleteConfirm.id)}
             >
               Delete
             </Button>
@@ -217,7 +260,7 @@ export default function PlansPage() {
         }
       >
         <p className="text-sm text-gray-600">
-          Are you sure you want to delete this plan? This action cannot be
+          Are you sure you want to delete &quot;{deleteConfirm?.name}&quot;? This action cannot be
           undone.
         </p>
       </Modal>

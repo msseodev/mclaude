@@ -6,7 +6,10 @@ import { useSSE } from '@/hooks/useSSE';
 import { useRunStatus } from '@/hooks/useRunStatus';
 import { Button } from '@/components/ui/Button';
 import { Badge, statusBadgeVariant } from '@/components/ui/Badge';
+import { useToast } from '@/components/ui/Toast';
 import type { SSEEvent, SessionStatus, Plan, PlanWithItems } from '@/types';
+
+const MAX_OUTPUT_ENTRIES = 10000;
 
 interface PromptOption {
   id: string;
@@ -30,8 +33,10 @@ export default function RunPage() {
 function RunPageContent() {
   const searchParams = useSearchParams();
   const { status, refresh } = useRunStatus();
+  const { showToast } = useToast();
   const [output, setOutput] = useState<Array<{ type: string; text: string }>>([]);
   const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [prompts, setPrompts] = useState<PromptOption[]>([]);
   const [startFromPromptId, setStartFromPromptId] = useState<string>('');
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -50,16 +55,30 @@ function RunPageContent() {
   }, [searchParams]);
 
   // Fetch prompts and plans
-  useEffect(() => {
-    fetch('/api/prompts')
-      .then(r => r.json())
-      .then((data: PromptOption[]) => setPrompts(data))
-      .catch(() => {});
-    fetch('/api/plans')
-      .then(r => r.json())
-      .then((data: Plan[]) => setPlans(data))
-      .catch(() => {});
+  const fetchData = useCallback(() => {
+    setError(null);
+    Promise.all([
+      fetch('/api/prompts').then(r => {
+        if (!r.ok) throw new Error('Failed to load prompts');
+        return r.json();
+      }),
+      fetch('/api/plans').then(r => {
+        if (!r.ok) throw new Error('Failed to load plans');
+        return r.json();
+      }),
+    ])
+      .then(([promptsData, plansData]: [PromptOption[], Plan[]]) => {
+        setPrompts(promptsData);
+        setPlans(plansData);
+      })
+      .catch(() => {
+        setError('Failed to load prompts or plans. Please try again.');
+      });
   }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   // Fetch plan items when plan is selected
   useEffect(() => {
@@ -69,7 +88,10 @@ function RunPageContent() {
       return;
     }
     fetch(`/api/plans/${selectedPlanId}`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('Failed to load plan details');
+        return r.json();
+      })
       .then((data: PlanWithItems) => {
         setPlanItems(
           data.items.map(i => ({
@@ -79,15 +101,33 @@ function RunPageContent() {
           }))
         );
       })
-      .catch(() => {});
-  }, [selectedPlanId]);
+      .catch(() => {
+        showToast('Failed to load plan details', 'error');
+      });
+  }, [selectedPlanId, showToast]);
 
   const handleSSEEvent = useCallback(
     (event: SSEEvent) => {
       switch (event.type) {
         case 'text_delta': {
           const text = (event.data.text as string) ?? '';
-          setOutput((prev) => [...prev, { type: 'text', text }]);
+          setOutput((prev) => {
+            // Coalesce consecutive text entries
+            if (prev.length > 0 && prev[prev.length - 1].type === 'text') {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                type: 'text',
+                text: updated[updated.length - 1].text + text,
+              };
+              return updated.length > MAX_OUTPUT_ENTRIES
+                ? updated.slice(-MAX_OUTPUT_ENTRIES)
+                : updated;
+            }
+            const next = [...prev, { type: 'text', text }];
+            return next.length > MAX_OUTPUT_ENTRIES
+              ? next.slice(-MAX_OUTPUT_ENTRIES)
+              : next;
+          });
           break;
         }
         case 'tool_start': {
@@ -139,7 +179,11 @@ function RunPageContent() {
     [refresh]
   );
 
-  const { connected } = useSSE('/api/run/stream', handleSSEEvent);
+  const handleReconnect = useCallback(() => {
+    setOutput([]); // Clear on reconnection to prevent duplicates
+  }, []);
+
+  const { connected } = useSSE('/api/run/stream', handleSSEEvent, handleReconnect);
 
   async function handleStart() {
     setActionLoading(true);
@@ -154,12 +198,18 @@ function RunPageContent() {
       } else if (startFromPromptId) {
         body.startFromPromptId = startFromPromptId;
       }
-      await fetch('/api/run', {
+      const res = await fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to start queue', 'error');
+      }
       await refresh();
+    } catch {
+      showToast('Failed to start queue', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -168,8 +218,14 @@ function RunPageContent() {
   async function handleStop() {
     setActionLoading(true);
     try {
-      await fetch('/api/run', { method: 'DELETE' });
+      const res = await fetch('/api/run', { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to stop queue', 'error');
+      }
       await refresh();
+    } catch {
+      showToast('Failed to stop queue', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -178,12 +234,18 @@ function RunPageContent() {
   async function handlePause() {
     setActionLoading(true);
     try {
-      await fetch('/api/run', {
+      const res = await fetch('/api/run', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'pause' }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to pause queue', 'error');
+      }
       await refresh();
+    } catch {
+      showToast('Failed to pause queue', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -192,12 +254,18 @@ function RunPageContent() {
   async function handleResume() {
     setActionLoading(true);
     try {
-      await fetch('/api/run', {
+      const res = await fetch('/api/run', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'resume' }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || 'Failed to resume queue', 'error');
+      }
       await refresh();
+    } catch {
+      showToast('Failed to resume queue', 'error');
     } finally {
       setActionLoading(false);
     }
@@ -236,6 +304,15 @@ function RunPageContent() {
           onStartFromPlanItemChange={setStartFromPlanItemId}
         />
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => { setError(null); fetchData(); }} className="font-medium text-red-700 hover:text-red-900 underline">
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Progress */}
       {status && sessionStatus !== 'idle' && (

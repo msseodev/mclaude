@@ -82,9 +82,18 @@ function initDb(): Database.Database {
   `);
 
   // Migrations for existing tables
-  try { db.exec('ALTER TABLE run_sessions ADD COLUMN plan_id TEXT'); } catch { /* column already exists */ }
-  try { db.exec('ALTER TABLE executions ADD COLUMN plan_id TEXT'); } catch { /* column already exists */ }
-  try { db.exec('ALTER TABLE executions ADD COLUMN effective_prompt TEXT'); } catch { /* column already exists */ }
+  const runSessionCols = db.prepare("PRAGMA table_info(run_sessions)").all() as Array<{ name: string }>;
+  if (!runSessionCols.some(c => c.name === 'plan_id')) {
+    db.exec('ALTER TABLE run_sessions ADD COLUMN plan_id TEXT');
+  }
+
+  const executionCols = db.prepare("PRAGMA table_info(executions)").all() as Array<{ name: string }>;
+  if (!executionCols.some(c => c.name === 'plan_id')) {
+    db.exec('ALTER TABLE executions ADD COLUMN plan_id TEXT');
+  }
+  if (!executionCols.some(c => c.name === 'effective_prompt')) {
+    db.exec('ALTER TABLE executions ADD COLUMN effective_prompt TEXT');
+  }
 
   // Insert default settings if not exist
   const insertSetting = db.prepare(
@@ -405,15 +414,14 @@ export function removePlanItem(planItemId: string): boolean {
   const item = db.prepare('SELECT * FROM plan_items WHERE id = ?').get(planItemId) as PlanItem | undefined;
   if (!item) return false;
 
-  db.prepare('DELETE FROM plan_items WHERE id = ?').run(planItemId);
-
-  // Reorder remaining items
-  const remaining = db.prepare(
-    'SELECT id FROM plan_items WHERE plan_id = ? ORDER BY item_order ASC'
-  ).all(item.plan_id) as Array<{ id: string }>;
-
-  const stmt = db.prepare('UPDATE plan_items SET item_order = ? WHERE id = ?');
   const transaction = db.transaction(() => {
+    db.prepare('DELETE FROM plan_items WHERE id = ?').run(planItemId);
+
+    const remaining = db.prepare(
+      'SELECT id FROM plan_items WHERE plan_id = ? ORDER BY item_order ASC'
+    ).all(item.plan_id) as Array<{ id: string }>;
+
+    const stmt = db.prepare('UPDATE plan_items SET item_order = ? WHERE id = ?');
     for (let i = 0; i < remaining.length; i++) {
       stmt.run(i, remaining[i].id);
     }

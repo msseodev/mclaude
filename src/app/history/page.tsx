@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Badge, statusBadgeVariant } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -9,29 +9,39 @@ import type { Execution } from '@/types';
 export default function HistoryPage() {
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Execution | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  useEffect(() => {
+  const fetchHistory = useCallback(() => {
+    setError(null);
     fetch('/api/history')
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to load history');
+        return res.json();
+      })
       .then((data: Execution[]) => setExecutions(data))
-      .catch(() => {})
+      .catch(() => {
+        setError('Failed to load execution history. Please try again.');
+      })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
 
   async function openDetail(id: string) {
     setSelectedId(id);
     setDetailLoading(true);
     try {
       const res = await fetch(`/api/history/${id}`);
-      if (res.ok) {
-        const data: Execution = await res.json();
-        setDetail(data);
-      }
+      if (!res.ok) throw new Error('Failed to load detail');
+      const data: Execution = await res.json();
+      setDetail(data);
     } catch {
-      // ignore
+      setDetail(null);
     } finally {
       setDetailLoading(false);
     }
@@ -58,6 +68,15 @@ export default function HistoryPage() {
         Execution History
       </h1>
 
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => { setError(null); fetchHistory(); }} className="font-medium text-red-700 hover:text-red-900 underline">
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
         {loading ? (
           <div className="px-6 py-12 text-center text-sm text-gray-500">
@@ -68,6 +87,7 @@ export default function HistoryPage() {
             No executions yet.
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
@@ -122,6 +142,7 @@ export default function HistoryPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

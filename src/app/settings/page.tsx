@@ -1,40 +1,59 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 import type { Settings } from '@/types';
 
 export default function SettingsPage() {
+  const { showToast } = useToast();
   const [form, setForm] = useState<Settings>({
     working_directory: '',
     claude_binary: 'claude',
     global_prompt: '',
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchSettings = useCallback(() => {
+    setError(null);
     fetch('/api/settings')
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to load settings');
+        return res.json();
+      })
       .then((data: Settings) => setForm(data))
-      .catch(() => {})
+      .catch(() => {
+        setError('Failed to load settings. Please try again.');
+      })
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    fetchSettings();
+  }, [fetchSettings]);
+
   async function handleSave() {
     setSaving(true);
-    setSaved(false);
+    setSaveError(null);
     try {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      if (res.ok) {
-        setSaved(true);
-        setTimeout(() => setSaved(false), 3000);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const errorMsg = data.error || 'Failed to save settings';
+        setSaveError(errorMsg);
+        showToast(errorMsg, 'error');
+        return;
       }
+      showToast('Settings saved', 'success');
+    } catch {
+      showToast('Failed to save settings', 'error');
     } finally {
       setSaving(false);
     }
@@ -53,13 +72,23 @@ export default function SettingsPage() {
     <div className="p-6">
       <h1 className="mb-6 text-2xl font-bold text-gray-900">Settings</h1>
 
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => { setError(null); fetchSettings(); }} className="font-medium text-red-700 hover:text-red-900 underline">
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="max-w-lg rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="settings-working-dir" className="mb-1 block text-sm font-medium text-gray-700">
               Working Directory
             </label>
             <input
+              id="settings-working-dir"
               type="text"
               value={form.working_directory}
               onChange={(e) =>
@@ -74,10 +103,11 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="settings-claude-binary" className="mb-1 block text-sm font-medium text-gray-700">
               Claude Binary
             </label>
             <input
+              id="settings-claude-binary"
               type="text"
               value={form.claude_binary}
               onChange={(e) =>
@@ -92,10 +122,11 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label htmlFor="settings-global-prompt" className="mb-1 block text-sm font-medium text-gray-700">
               Global Prompt
             </label>
             <textarea
+              id="settings-global-prompt"
               value={form.global_prompt}
               onChange={(e) =>
                 setForm({ ...form, global_prompt: e.target.value })
@@ -111,13 +142,16 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {saveError && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {saveError}
+          </div>
+        )}
+
         <div className="mt-6 flex items-center gap-3">
           <Button onClick={handleSave} loading={saving}>
             Save Settings
           </Button>
-          {saved && (
-            <span className="text-sm text-green-600">Settings saved.</span>
-          )}
         </div>
       </div>
     </div>

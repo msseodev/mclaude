@@ -97,11 +97,11 @@ test.describe('Prompts Page', () => {
     await page.locator('button').filter({ has: page.locator('svg path[d*="14.74"]') }).click();
 
     // Confirm delete
-    await expect(page.locator('text=Are you sure you want to delete this prompt?')).toBeVisible();
+    await expect(page.locator('text=Are you sure you want to delete "Delete Me"?')).toBeVisible();
     await page.click('button:has-text("Delete")');
 
-    // Prompt should be gone
-    await expect(page.locator('text=Delete Me')).not.toBeVisible();
+    // Prompt card should be gone (check the prompt list, not the modal text)
+    await expect(page.locator('.space-y-2 >> text=Delete Me')).not.toBeVisible();
   });
 
   test('should cancel delete', async ({ page, request }) => {
