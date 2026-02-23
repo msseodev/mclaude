@@ -235,8 +235,10 @@ class RunManagerImpl {
       });
     }
 
-    // Calculate exponential backoff
-    const backoffMs = Math.min(BACKOFF_BASE_MS * Math.pow(2, this.retryCount), BACKOFF_MAX_MS);
+    // Use parsed reset time if available, otherwise fall back to exponential backoff
+    const backoffMs = info.retryAfterMs
+      ? info.retryAfterMs
+      : Math.min(BACKOFF_BASE_MS * Math.pow(2, this.retryCount), BACKOFF_MAX_MS);
     this.waitingUntil = new Date(Date.now() + backoffMs);
 
     // Emit rate limit event
