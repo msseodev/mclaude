@@ -18,6 +18,9 @@ export default function AutoSettingsPage() {
     branch_name: 'auto/improvements',
     max_retries: 3,
     max_consecutive_failures: 5,
+    review_max_iterations: 2,
+    skip_designer_for_fixes: true,
+    require_initial_prompt: false,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -265,6 +268,49 @@ export default function AutoSettingsPage() {
             <p className="mt-1 text-xs text-gray-500">
               Auto-pause after N consecutive failures
             </p>
+          </div>
+
+          <div>
+            <label htmlFor="auto-review-max-iterations" className="mb-1 block text-sm font-medium text-gray-700">
+              Review Max Iterations
+            </label>
+            <input
+              id="auto-review-max-iterations"
+              type="number"
+              min={0}
+              value={form.review_max_iterations}
+              onChange={(e) => setForm({ ...form, review_max_iterations: parseInt(e.target.value, 10) || 0 })}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Max Reviewer ↔ Developer feedback iterations per cycle
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <input
+              id="auto-skip-designer"
+              type="checkbox"
+              checked={form.skip_designer_for_fixes}
+              onChange={(e) => setForm({ ...form, skip_designer_for_fixes: e.target.checked })}
+              className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+            />
+            <label htmlFor="auto-skip-designer" className="text-sm font-medium text-gray-700">
+              Skip Product Designer for fix cycles
+            </label>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <input
+              id="auto-require-prompt"
+              type="checkbox"
+              checked={form.require_initial_prompt}
+              onChange={(e) => setForm({ ...form, require_initial_prompt: e.target.checked })}
+              className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+            />
+            <label htmlFor="auto-require-prompt" className="text-sm font-medium text-gray-700">
+              Require initial prompt to start
+            </label>
           </div>
         </div>
 

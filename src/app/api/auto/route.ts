@@ -5,13 +5,15 @@ import { autoEngine } from '@/lib/autonomous/cycle-engine';
 export async function POST(request: NextRequest) {
   try {
     let targetProject: string | undefined;
+    let initialPrompt: string | undefined;
     try {
       const body = await request.json();
       targetProject = body.targetProject;
+      initialPrompt = body.initialPrompt;
     } catch {
       // No body is fine
     }
-    await autoEngine.start(targetProject);
+    await autoEngine.start(targetProject, initialPrompt);
     const status = autoEngine.getStatus();
     return NextResponse.json(status);
   } catch (error) {
@@ -34,12 +36,12 @@ export async function DELETE() {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action } = body;
+    const { action, midSessionPrompt } = body;
     if (action === 'pause') {
       await autoEngine.pause();
       return NextResponse.json({ success: true });
     } else if (action === 'resume') {
-      await autoEngine.resume();
+      await autoEngine.resume(midSessionPrompt);
       return NextResponse.json({ success: true });
     } else {
       return NextResponse.json({ error: 'action must be "pause" or "resume"' }, { status: 400 });

@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
-import type { AutoCycle, AutoSession, AutoCycleStatus } from '@/types';
+import type { AutoCycle, AutoSession, AutoCycleStatus, AutoAgentRun } from '@/types';
 
 type BadgeVariant = 'gray' | 'blue' | 'green' | 'yellow' | 'red' | 'purple';
 
@@ -30,6 +30,16 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleString();
 }
 
+function agentRunStatusVariant(status: string): BadgeVariant {
+  switch (status) {
+    case 'completed': return 'green';
+    case 'failed': return 'red';
+    case 'running': return 'blue';
+    case 'skipped': return 'yellow';
+    default: return 'gray';
+  }
+}
+
 export default function CyclesPage() {
   const [sessions, setSessions] = useState<AutoSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -38,6 +48,9 @@ export default function CyclesPage() {
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCycle, setSelectedCycle] = useState<AutoCycle | null>(null);
+  const [expandedCycleId, setExpandedCycleId] = useState<string | null>(null);
+  const [agentRuns, setAgentRuns] = useState<AutoAgentRun[]>([]);
+  const [agentRunsLoading, setAgentRunsLoading] = useState(false);
 
   // Fetch sessions
   const fetchSessions = useCallback(() => {
@@ -91,6 +104,33 @@ export default function CyclesPage() {
     });
     return () => { cancelled = true; };
   }, [selectedSessionId, fetchCycles]);
+
+  const toggleExpandCycle = useCallback(async (cycle: AutoCycle) => {
+    if (cycle.phase !== 'pipeline') {
+      setExpandedCycleId(null);
+      setSelectedCycle(cycle);
+      return;
+    }
+
+    if (expandedCycleId === cycle.id) {
+      setExpandedCycleId(null);
+      setAgentRuns([]);
+      return;
+    }
+
+    setExpandedCycleId(cycle.id);
+    setAgentRunsLoading(true);
+    try {
+      const res = await fetch(`/api/auto/agent-runs?cycleId=${cycle.id}`);
+      if (!res.ok) throw new Error('Failed to load agent runs');
+      const data: AutoAgentRun[] = await res.json();
+      setAgentRuns(data);
+    } catch {
+      setAgentRuns([]);
+    } finally {
+      setAgentRunsLoading(false);
+    }
+  }, [expandedCycleId]);
 
   return (
     <div className="p-6">
@@ -171,41 +211,93 @@ export default function CyclesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {cycles.map((cycle) => (
-                  <tr
-                    key={cycle.id}
-                    className="cursor-pointer hover:bg-gray-50"
-                    onClick={() => setSelectedCycle(cycle)}
-                  >
-                    <td className="px-6 py-3 font-medium text-gray-900">
-                      {cycle.cycle_number}
-                    </td>
-                    <td className="px-6 py-3 text-gray-600">
-                      <Badge variant="purple">{cycle.phase}</Badge>
-                    </td>
-                    <td className="px-6 py-3 font-mono text-xs text-gray-500">
-                      {cycle.finding_id
-                        ? cycle.finding_id.slice(0, 8)
-                        : '-'}
-                    </td>
-                    <td className="px-6 py-3">
-                      <Badge variant={cycleStatusBadgeVariant(cycle.status)}>
-                        {cycle.status}
-                      </Badge>
-                    </td>
-                    <td className="px-6 py-3 text-gray-600">
-                      {cycle.cost_usd != null
-                        ? `$${cycle.cost_usd.toFixed(4)}`
-                        : '-'}
-                    </td>
-                    <td className="px-6 py-3 text-gray-600">
-                      {formatDuration(cycle.duration_ms)}
-                    </td>
-                    <td className="px-6 py-3 text-gray-600">
-                      {formatDate(cycle.started_at)}
-                    </td>
-                  </tr>
-                ))}
+                {cycles.map((cycle) => {
+                  const isExpanded = expandedCycleId === cycle.id;
+                  const isPipeline = cycle.phase === 'pipeline';
+                  return (
+                    <Fragment key={cycle.id}>
+                      <tr
+                        className="cursor-pointer hover:bg-gray-50"
+                        onClick={() => toggleExpandCycle(cycle)}
+                      >
+                        <td className="px-6 py-3 font-medium text-gray-900">
+                          <span className="flex items-center gap-1">
+                            {isPipeline && (
+                              <span className="text-gray-400">{isExpanded ? '\u25BC' : '\u25B6'}</span>
+                            )}
+                            {cycle.cycle_number}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 text-gray-600">
+                          <Badge variant="purple">{cycle.phase}</Badge>
+                        </td>
+                        <td className="px-6 py-3 font-mono text-xs text-gray-500">
+                          {cycle.finding_id
+                            ? cycle.finding_id.slice(0, 8)
+                            : '-'}
+                        </td>
+                        <td className="px-6 py-3">
+                          <Badge variant={cycleStatusBadgeVariant(cycle.status)}>
+                            {cycle.status}
+                          </Badge>
+                        </td>
+                        <td className="px-6 py-3 text-gray-600">
+                          {cycle.cost_usd != null
+                            ? `$${cycle.cost_usd.toFixed(4)}`
+                            : '-'}
+                        </td>
+                        <td className="px-6 py-3 text-gray-600">
+                          {formatDuration(cycle.duration_ms)}
+                        </td>
+                        <td className="px-6 py-3 text-gray-600">
+                          {formatDate(cycle.started_at)}
+                        </td>
+                      </tr>
+                      {isPipeline && isExpanded && (
+                        <tr>
+                          <td colSpan={7} className="bg-gray-50 px-6 py-3">
+                            {agentRunsLoading ? (
+                              <p className="text-sm text-gray-500">Loading agent runs...</p>
+                            ) : agentRuns.length === 0 ? (
+                              <p className="text-sm text-gray-500">No agent runs found.</p>
+                            ) : (
+                              <table className="w-full text-left text-sm">
+                                <thead>
+                                  <tr className="border-b border-gray-200">
+                                    <th className="px-4 py-2 font-medium text-gray-600">Agent</th>
+                                    <th className="px-4 py-2 font-medium text-gray-600">Iteration</th>
+                                    <th className="px-4 py-2 font-medium text-gray-600">Status</th>
+                                    <th className="px-4 py-2 font-medium text-gray-600">Cost</th>
+                                    <th className="px-4 py-2 font-medium text-gray-600">Duration</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {agentRuns.map((run) => (
+                                    <tr key={run.id} className="hover:bg-gray-100">
+                                      <td className="px-4 py-2 text-gray-900">{run.agent_name}</td>
+                                      <td className="px-4 py-2 text-gray-600">{run.iteration}</td>
+                                      <td className="px-4 py-2">
+                                        <Badge variant={agentRunStatusVariant(run.status)}>
+                                          {run.status}
+                                        </Badge>
+                                      </td>
+                                      <td className="px-4 py-2 text-gray-600">
+                                        {run.cost_usd != null ? `$${run.cost_usd.toFixed(4)}` : '-'}
+                                      </td>
+                                      <td className="px-4 py-2 text-gray-600">
+                                        {formatDuration(run.duration_ms)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -23,6 +23,8 @@ export async function PUT(request: NextRequest) {
       'target_project', 'test_command', 'max_cycles', 'budget_usd',
       'discovery_interval', 'review_interval', 'auto_commit', 'branch_name',
       'max_retries', 'max_consecutive_failures',
+      // v2 settings
+      'review_max_iterations', 'skip_designer_for_fixes', 'require_initial_prompt',
     ];
 
     for (const key of settingKeys) {

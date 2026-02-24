@@ -1,10 +1,11 @@
 // --- Status types ---
 export type AutoSessionStatus = 'running' | 'paused' | 'waiting_for_limit' | 'completed' | 'stopped';
 export type AutoCycleStatus = 'running' | 'completed' | 'failed' | 'rate_limited' | 'rolled_back';
-export type AutoPhase = 'discovery' | 'fix' | 'test' | 'improve' | 'review';
+export type AutoPhase = 'discovery' | 'fix' | 'test' | 'improve' | 'review' | 'pipeline';
 export type FindingCategory = 'bug' | 'improvement' | 'idea' | 'test_failure' | 'performance' | 'accessibility' | 'security';
 export type FindingPriority = 'P0' | 'P1' | 'P2' | 'P3';
 export type FindingStatus = 'open' | 'in_progress' | 'resolved' | 'wont_fix' | 'duplicate';
+export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'skipped';
 
 // --- DB Entities ---
 export interface AutoSession {
@@ -14,6 +15,7 @@ export interface AutoSession {
   total_cycles: number;
   total_cost_usd: number;
   config: string | null;   // JSON string of session config
+  initial_prompt?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -53,6 +55,42 @@ export interface AutoFinding {
   updated_at: string;
 }
 
+export interface AutoAgent {
+  id: string;
+  name: string;
+  display_name: string;
+  role_description: string;
+  system_prompt: string;
+  pipeline_order: number;
+  enabled: number;       // SQLite integer 0/1
+  is_builtin: number;    // SQLite integer 0/1
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutoUserPrompt {
+  id: string;
+  session_id: string;
+  content: string;
+  added_at_cycle: number;
+  created_at: string;
+}
+
+export interface AutoAgentRun {
+  id: string;
+  cycle_id: string;
+  agent_id: string;
+  agent_name: string;
+  iteration: number;
+  status: AgentRunStatus;
+  prompt: string;
+  output: string;
+  cost_usd: number | null;
+  duration_ms: number | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
 export interface AutoSettings {
   target_project: string;
   test_command: string;
@@ -64,6 +102,9 @@ export interface AutoSettings {
   branch_name: string;
   max_retries: number;       // per finding
   max_consecutive_failures: number;
+  review_max_iterations: number;
+  skip_designer_for_fixes: boolean;
+  require_initial_prompt: boolean;
 }
 
 // --- SSE Event types ---
@@ -83,6 +124,11 @@ export type AutoSSEEventType =
   | 'tool_end'
   | 'rate_limit'
   | 'session_status'
+  | 'agent_start'
+  | 'agent_complete'
+  | 'agent_failed'
+  | 'review_iteration'
+  | 'user_prompt_added'
   | 'error';
 
 export interface AutoSSEEvent {
@@ -106,6 +152,8 @@ export interface AutoRunStatus {
     findingsOpen: number;
     testPassRate: number | null;
   };
+  currentAgent: { id: string; name: string } | null;
+  pipelineAgents: Array<{ id: string; name: string; status: string }>;
   waitingUntil: string | null;
   retryCount: number;
 }

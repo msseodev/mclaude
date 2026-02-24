@@ -1,6 +1,7 @@
 import { getDb } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-import type { AutoSession, AutoCycle, AutoFinding, AutoSettings } from './types';
+import type { AutoSession, AutoCycle, AutoFinding, AutoSettings, AutoUserPrompt, AutoAgent, AutoAgentRun } from './types';
+import { seedBuiltinAgents } from './seed-agents';
 
 // --- Init ---
 
@@ -62,6 +63,57 @@ export function initAutoTables(): void {
     );
   `);
 
+  // v2 migration: add initial_prompt column
+  const sessionCols = db.prepare("PRAGMA table_info(auto_sessions)").all() as Array<{ name: string }>;
+  if (!sessionCols.some(c => c.name === 'initial_prompt')) {
+    db.exec('ALTER TABLE auto_sessions ADD COLUMN initial_prompt TEXT');
+  }
+
+  // v2 tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auto_user_prompts (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      added_at_cycle INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES auto_sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      role_description TEXT NOT NULL,
+      system_prompt TEXT NOT NULL,
+      pipeline_order REAL NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      is_builtin INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auto_agent_runs (
+      id TEXT PRIMARY KEY,
+      cycle_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      agent_name TEXT NOT NULL,
+      iteration INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'running',
+      prompt TEXT NOT NULL,
+      output TEXT NOT NULL DEFAULT '',
+      cost_usd REAL,
+      duration_ms INTEGER,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      FOREIGN KEY (cycle_id) REFERENCES auto_cycles(id) ON DELETE CASCADE,
+      FOREIGN KEY (agent_id) REFERENCES auto_agents(id)
+    );
+  `);
+
+  // Seed built-in agents
+  seedBuiltinAgents(db);
+
   // Insert default settings if not exist
   const insertSetting = db.prepare(
     'INSERT OR IGNORE INTO auto_settings (key, value) VALUES (?, ?)'
@@ -76,6 +128,10 @@ export function initAutoTables(): void {
   insertSetting.run('branch_name', 'auto/improvements');
   insertSetting.run('max_retries', '3');
   insertSetting.run('max_consecutive_failures', '5');
+  // v2 settings
+  insertSetting.run('review_max_iterations', '2');
+  insertSetting.run('skip_designer_for_fixes', 'true');
+  insertSetting.run('require_initial_prompt', 'false');
 }
 
 // Initialize tables on first import
@@ -83,14 +139,14 @@ initAutoTables();
 
 // --- Session CRUD ---
 
-export function createAutoSession(targetProject: string, config?: Record<string, unknown>): AutoSession {
+export function createAutoSession(targetProject: string, config?: Record<string, unknown>, initialPrompt?: string): AutoSession {
   const db = getDb();
   const id = uuidv4();
   const now = new Date().toISOString();
 
   db.prepare(
-    'INSERT INTO auto_sessions (id, target_project, status, total_cycles, total_cost_usd, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, targetProject, 'running', 0, 0, config ? JSON.stringify(config) : null, now, now);
+    'INSERT INTO auto_sessions (id, target_project, status, total_cycles, total_cost_usd, config, initial_prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, targetProject, 'running', 0, 0, config ? JSON.stringify(config) : null, initialPrompt ?? null, now, now);
 
   return getAutoSession(id)!;
 }
@@ -306,5 +362,131 @@ export function getAllAutoSettings(): AutoSettings {
     branch_name: getAutoSetting('branch_name') ?? 'auto/improvements',
     max_retries: Number(getAutoSetting('max_retries') ?? '3'),
     max_consecutive_failures: Number(getAutoSetting('max_consecutive_failures') ?? '5'),
+    // v2 settings
+    review_max_iterations: Number(getAutoSetting('review_max_iterations') ?? '2'),
+    skip_designer_for_fixes: getAutoSetting('skip_designer_for_fixes') !== 'false',
+    require_initial_prompt: getAutoSetting('require_initial_prompt') === 'true',
   };
+}
+
+// --- User Prompts CRUD ---
+
+export function createAutoUserPrompt(data: { session_id: string; content: string; added_at_cycle: number }): AutoUserPrompt {
+  const db = getDb();
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO auto_user_prompts (id, session_id, content, added_at_cycle, created_at) VALUES (?, ?, ?, ?, ?)').run(id, data.session_id, data.content, data.added_at_cycle, now);
+  return db.prepare('SELECT * FROM auto_user_prompts WHERE id = ?').get(id) as AutoUserPrompt;
+}
+
+export function getAutoUserPrompts(sessionId: string): AutoUserPrompt[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_user_prompts WHERE session_id = ? ORDER BY created_at ASC').all(sessionId) as AutoUserPrompt[];
+}
+
+export function deleteAutoUserPrompt(id: string): boolean {
+  const db = getDb();
+  const result = db.prepare('DELETE FROM auto_user_prompts WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+// --- Agents CRUD ---
+
+export function getAutoAgents(enabledOnly?: boolean): AutoAgent[] {
+  const db = getDb();
+  if (enabledOnly) {
+    return db.prepare('SELECT * FROM auto_agents WHERE enabled = 1 ORDER BY pipeline_order ASC').all() as AutoAgent[];
+  }
+  return db.prepare('SELECT * FROM auto_agents ORDER BY pipeline_order ASC').all() as AutoAgent[];
+}
+
+export function getAutoAgent(id: string): AutoAgent | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_agents WHERE id = ?').get(id) as AutoAgent | undefined;
+}
+
+export function createAutoAgent(data: { name: string; display_name: string; role_description: string; system_prompt: string; pipeline_order: number }): AutoAgent {
+  const db = getDb();
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO auto_agents (id, name, display_name, role_description, system_prompt, pipeline_order, enabled, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)').run(id, data.name, data.display_name, data.role_description, data.system_prompt, data.pipeline_order, now, now);
+  return getAutoAgent(id)!;
+}
+
+export function updateAutoAgent(id: string, data: Partial<Pick<AutoAgent, 'display_name' | 'role_description' | 'system_prompt' | 'pipeline_order' | 'enabled'>>): AutoAgent | undefined {
+  const db = getDb();
+  const existing = getAutoAgent(id);
+  if (!existing) return undefined;
+  const now = new Date().toISOString();
+  const display_name = data.display_name ?? existing.display_name;
+  const role_description = data.role_description ?? existing.role_description;
+  const system_prompt = data.system_prompt ?? existing.system_prompt;
+  const pipeline_order = data.pipeline_order ?? existing.pipeline_order;
+  const enabled = data.enabled !== undefined ? data.enabled : existing.enabled;
+  db.prepare('UPDATE auto_agents SET display_name = ?, role_description = ?, system_prompt = ?, pipeline_order = ?, enabled = ?, updated_at = ? WHERE id = ?').run(display_name, role_description, system_prompt, pipeline_order, enabled, now, id);
+  return getAutoAgent(id);
+}
+
+export function deleteAutoAgent(id: string): boolean {
+  const db = getDb();
+  const agent = getAutoAgent(id);
+  if (!agent) return false;
+  if (agent.is_builtin) return false; // Cannot delete built-in agents
+  const result = db.prepare('DELETE FROM auto_agents WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+export function toggleAutoAgent(id: string): AutoAgent | undefined {
+  const db = getDb();
+  const agent = getAutoAgent(id);
+  if (!agent) return undefined;
+  const newEnabled = agent.enabled ? 0 : 1;
+  const now = new Date().toISOString();
+  db.prepare('UPDATE auto_agents SET enabled = ?, updated_at = ? WHERE id = ?').run(newEnabled, now, id);
+  return getAutoAgent(id);
+}
+
+export function reorderAutoAgents(orderedPairs: Array<{ id: string; pipeline_order: number }>): void {
+  const db = getDb();
+  const stmt = db.prepare('UPDATE auto_agents SET pipeline_order = ?, updated_at = ? WHERE id = ?');
+  const now = new Date().toISOString();
+  const transaction = db.transaction(() => {
+    for (const pair of orderedPairs) {
+      stmt.run(pair.pipeline_order, now, pair.id);
+    }
+  });
+  transaction();
+}
+
+// --- Agent Runs CRUD ---
+
+export function createAutoAgentRun(data: { cycle_id: string; agent_id: string; agent_name: string; iteration: number; prompt: string }): AutoAgentRun {
+  const db = getDb();
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO auto_agent_runs (id, cycle_id, agent_id, agent_name, iteration, status, prompt, output, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, data.cycle_id, data.agent_id, data.agent_name, data.iteration, 'running', data.prompt, '', now);
+  return db.prepare('SELECT * FROM auto_agent_runs WHERE id = ?').get(id) as AutoAgentRun;
+}
+
+export function updateAutoAgentRun(id: string, data: Partial<Pick<AutoAgentRun, 'status' | 'output' | 'cost_usd' | 'duration_ms' | 'completed_at'>>): AutoAgentRun | undefined {
+  const db = getDb();
+  const existing = db.prepare('SELECT * FROM auto_agent_runs WHERE id = ?').get(id) as AutoAgentRun | undefined;
+  if (!existing) return undefined;
+  const status = data.status ?? existing.status;
+  const output = data.output ?? existing.output;
+  const cost_usd = data.cost_usd !== undefined ? data.cost_usd : existing.cost_usd;
+  const duration_ms = data.duration_ms !== undefined ? data.duration_ms : existing.duration_ms;
+  const completed_at = data.completed_at !== undefined ? data.completed_at : existing.completed_at;
+  db.prepare('UPDATE auto_agent_runs SET status = ?, output = ?, cost_usd = ?, duration_ms = ?, completed_at = ? WHERE id = ?').run(status, output, cost_usd, duration_ms, completed_at, id);
+  return db.prepare('SELECT * FROM auto_agent_runs WHERE id = ?').get(id) as AutoAgentRun | undefined;
+}
+
+export function getAutoAgentRunsByCycle(cycleId: string): AutoAgentRun[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_agent_runs WHERE cycle_id = ? ORDER BY started_at ASC').all(cycleId) as AutoAgentRun[];
+}
+
+export function getAutoAgentRun(id: string): AutoAgentRun | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_agent_runs WHERE id = ?').get(id) as AutoAgentRun | undefined;
 }

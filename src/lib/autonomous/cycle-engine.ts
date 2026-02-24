@@ -1,5 +1,7 @@
 import { ClaudeExecutor } from '../claude-executor';
 import { getSetting } from '../db';
+import { PipelineExecutor } from './pipeline-executor';
+import type { AutoUserPrompt } from './types';
 import {
   createAutoSession,
   getAutoSession,
@@ -15,6 +17,10 @@ import {
   getOpenAutoFindings,
   getAllAutoSettings,
   initAutoTables,
+  getAutoAgents,
+  createAutoUserPrompt,
+  getAutoUserPrompts,
+  getAutoAgentRunsByCycle,
 } from './db';
 import { PhaseSelector } from './phase-selector';
 import { PromptBuilder } from './prompt-builder';
@@ -37,6 +43,7 @@ const MAX_CONSECUTIVE_FAILURES_DEFAULT = 5;
 
 class CycleEngineImpl {
   private executor: ClaudeExecutor | null = null;
+  private pipelineExecutor: PipelineExecutor | null = null;
   private currentSessionId: string | null = null;
   private currentCycleId: string | null = null;
   private cycleNumber: number = 0;
@@ -84,7 +91,7 @@ class CycleEngineImpl {
 
   // --- Lifecycle ---
 
-  async start(targetProject?: string): Promise<void> {
+  async start(targetProject?: string, initialPrompt?: string): Promise<void> {
     // Guard: already running
     if (this.executor?.isRunning() || this.retryTimer || this.currentSessionId) {
       throw new Error('Autonomous mode is already running');
@@ -109,7 +116,7 @@ class CycleEngineImpl {
     }
 
     // Create session
-    const session = createAutoSession(project);
+    const session = createAutoSession(project, undefined, initialPrompt);
     this.currentSessionId = session.id;
     this.cycleNumber = 0;
     this.consecutiveFailures = 0;
@@ -133,6 +140,9 @@ class CycleEngineImpl {
 
   async stop(): Promise<void> {
     this.isStopping = true;
+
+    this.pipelineExecutor?.abort();
+    this.pipelineExecutor = null;
 
     if (this.executor) {
       this.executor.kill();
@@ -173,6 +183,9 @@ class CycleEngineImpl {
 
     this.isPaused = true;
 
+    this.pipelineExecutor?.abort();
+    this.pipelineExecutor = null;
+
     if (this.executor) {
       this.executor.kill();
       this.executor = null;
@@ -201,7 +214,7 @@ class CycleEngineImpl {
     });
   }
 
-  async resume(): Promise<void> {
+  async resume(midSessionPrompt?: string): Promise<void> {
     if (!this.currentSessionId) {
       throw new Error('No active autonomous session to resume');
     }
@@ -212,6 +225,20 @@ class CycleEngineImpl {
     }
 
     this.isPaused = false;
+
+    if (midSessionPrompt?.trim()) {
+      createAutoUserPrompt({
+        session_id: this.currentSessionId!,
+        content: midSessionPrompt.trim(),
+        added_at_cycle: this.cycleNumber,
+      });
+      this.emit({
+        type: 'user_prompt_added',
+        data: { content: midSessionPrompt.trim(), addedAtCycle: this.cycleNumber },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     updateAutoSession(this.currentSessionId, { status: 'running' });
 
     this.emit({
@@ -221,6 +248,14 @@ class CycleEngineImpl {
     });
 
     this.processNextCycle();
+  }
+
+  emitUserPromptAdded(prompt: AutoUserPrompt): void {
+    this.emit({
+      type: 'user_prompt_added',
+      data: { id: prompt.id, content: prompt.content, addedAtCycle: prompt.added_at_cycle },
+      timestamp: new Date().toISOString(),
+    });
   }
 
   getStatus(): AutoRunStatus {
@@ -239,6 +274,8 @@ class CycleEngineImpl {
           findingsOpen: 0,
           testPassRate: null,
         },
+        currentAgent: null,
+        pipelineAgents: [],
         waitingUntil: null,
         retryCount: 0,
       };
@@ -255,6 +292,33 @@ class CycleEngineImpl {
       if (f) currentFinding = { id: f.id, title: f.title };
     }
 
+    let currentAgent: { id: string; name: string } | null = null;
+    let pipelineAgents: Array<{ id: string; name: string; status: string }> = [];
+    if (this.currentPhase === 'pipeline' as AutoPhase) {
+      try {
+        const enabledAgents = getAutoAgents(true);
+        pipelineAgents = enabledAgents.map(a => ({
+          id: a.id,
+          name: a.display_name,
+          status: 'pending',
+        }));
+        // Update with actual run statuses if cycle exists
+        if (this.currentCycleId) {
+          const runs = getAutoAgentRunsByCycle(this.currentCycleId);
+          for (const run of runs) {
+            const agentIdx = pipelineAgents.findIndex(a => a.id === run.agent_id);
+            if (agentIdx >= 0) {
+              pipelineAgents[agentIdx].status = run.status;
+            }
+          }
+          const runningRun = runs.find((r: { status: string }) => r.status === 'running');
+          if (runningRun) {
+            currentAgent = { id: runningRun.agent_id, name: runningRun.agent_name };
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
     return {
       sessionId: this.currentSessionId,
       status: (session?.status as AutoSessionStatus) ?? 'running',
@@ -269,6 +333,8 @@ class CycleEngineImpl {
         findingsOpen: openFindings.length,
         testPassRate: null, // Could compute from recent test cycles
       },
+      currentAgent,
+      pipelineAgents,
       waitingUntil: this.waitingUntil?.toISOString() ?? null,
       retryCount: this.retryCount,
     };
@@ -299,15 +365,31 @@ class CycleEngineImpl {
     }, 100); // Small delay between cycles
   }
 
+  private isPipelineMode(): boolean {
+    try {
+      const enabledAgents = getAutoAgents(true);
+      return enabledAgents.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   private async _processNextCycleImpl(): Promise<void> {
     if (!this.currentSessionId) return;
 
     const session = getAutoSession(this.currentSessionId);
     if (!session) return;
 
-    // Safety check
     if (!this.checkSafetyLimits()) return;
 
+    if (this.isPipelineMode()) {
+      await this._processNextCyclePipeline(session);
+    } else {
+      await this._processNextCycleV1(session);
+    }
+  }
+
+  private async _processNextCycleV1(session: NonNullable<ReturnType<typeof getAutoSession>>): Promise<void> {
     const settings = getAllAutoSettings();
     const openFindings = getOpenAutoFindings();
 
@@ -341,7 +423,7 @@ class CycleEngineImpl {
     const promptBuilder = new PromptBuilder(settings);
     const stateManager = new StateManager(session.target_project);
     const stateContext = await stateManager.readState() || '';
-    const allFindings = getAutoFindings({ session_id: this.currentSessionId });
+    const allFindings = getAutoFindings({ session_id: this.currentSessionId! });
 
     let prompt: string;
     switch (selection.phase) {
@@ -371,11 +453,14 @@ class CycleEngineImpl {
         prompt = promptBuilder.buildReviewPrompt(stateContext, diff);
         break;
       }
+      default:
+        prompt = promptBuilder.buildDiscoveryPrompt(stateContext, allFindings);
+        break;
     }
 
     // Create cycle record
     const cycle = createAutoCycle({
-      session_id: this.currentSessionId,
+      session_id: this.currentSessionId!,
       cycle_number: this.cycleNumber,
       phase: selection.phase,
       finding_id: selection.findingId,
@@ -423,6 +508,176 @@ class CycleEngineImpl {
     );
 
     this.executor.execute(prompt, session.target_project);
+  }
+
+  private async _processNextCyclePipeline(session: NonNullable<ReturnType<typeof getAutoSession>>): Promise<void> {
+    if (!this.currentSessionId) return;
+
+    const settings = getAllAutoSettings();
+
+    // Select finding to fix (same priority logic as v1)
+    const openFindings = getOpenAutoFindings();
+    const actionableFindings = openFindings.filter(f => f.retry_count < f.max_retries);
+    // Sort by priority: P0 > P1 > P2 > P3
+    actionableFindings.sort((a, b) => a.priority.localeCompare(b.priority));
+    const findingToFix = actionableFindings.length > 0 ? actionableFindings[0] : null;
+
+    if (findingToFix) {
+      updateAutoFinding(findingToFix.id, { status: 'in_progress' });
+      this.currentFindingId = findingToFix.id;
+    }
+
+    // Git checkpoint
+    let gitCheckpoint: string | null = null;
+    if (settings.auto_commit) {
+      const gitManager = new GitManager(session.target_project);
+      gitCheckpoint = await gitManager.createCheckpoint(`before-cycle-${this.cycleNumber}`);
+    }
+
+    // Create cycle with phase='pipeline'
+    const cycle = createAutoCycle({
+      session_id: this.currentSessionId,
+      cycle_number: this.cycleNumber,
+      phase: 'pipeline',
+      finding_id: findingToFix?.id,
+      git_checkpoint: gitCheckpoint,
+    });
+    this.currentCycleId = cycle.id;
+    this.currentPhase = 'pipeline' as AutoPhase;
+    this.currentOutput = '';
+
+    // Emit cycle_start
+    this.emit({
+      type: 'cycle_start',
+      data: {
+        cycleId: cycle.id,
+        cycleNumber: this.cycleNumber,
+        phase: 'pipeline',
+        findingId: findingToFix?.id ?? null,
+      },
+      timestamp: new Date().toISOString(),
+    });
+
+    // Execute pipeline
+    this.pipelineExecutor = new PipelineExecutor(
+      session,
+      cycle.id,
+      this.cycleNumber,
+      this.emit.bind(this),
+      findingToFix,
+    );
+
+    const result = await this.pipelineExecutor.execute();
+    this.pipelineExecutor = null;
+
+    // Handle rate limit
+    if (result.abortedByRateLimit && result.rateLimitInfo) {
+      this.handleRateLimit(result.rateLimitInfo);
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    // Handle QA failure
+    if (result.qaResult && !result.qaResult.passed) {
+      // Rollback
+      if (settings.auto_commit && gitCheckpoint) {
+        const gitManager = new GitManager(session.target_project);
+        const rollbackSuccess = await gitManager.rollback(gitCheckpoint);
+        if (rollbackSuccess) {
+          updateAutoCycle(cycle.id, { status: 'rolled_back' });
+          this.emit({
+            type: 'git_rollback',
+            data: { checkpoint: gitCheckpoint },
+            timestamp: now,
+          });
+        }
+      }
+      // Create finding for failed tests
+      createAutoFinding({
+        session_id: this.currentSessionId,
+        category: 'test_failure',
+        priority: 'P0',
+        title: 'QA tests failed in pipeline cycle',
+        description: result.qaResult.testOutput.slice(0, 2000),
+      });
+    }
+
+    // Mark finding resolved on success
+    if (result.success && findingToFix) {
+      updateAutoFinding(findingToFix.id, {
+        status: 'resolved',
+        resolved_by_cycle_id: cycle.id,
+      });
+      this.emit({
+        type: 'finding_resolved',
+        data: { findingId: findingToFix.id, cycleId: cycle.id },
+        timestamp: now,
+      });
+    } else if (!result.success && findingToFix) {
+      // Increment retry count
+      const f = getAutoFinding(findingToFix.id);
+      if (f) {
+        const newRetryCount = f.retry_count + 1;
+        if (newRetryCount >= f.max_retries) {
+          updateAutoFinding(findingToFix.id, { status: 'wont_fix', retry_count: newRetryCount });
+        } else {
+          updateAutoFinding(findingToFix.id, { status: 'open', retry_count: newRetryCount });
+        }
+      }
+    }
+
+    // Update cycle record
+    const cycleStatus = result.success ? 'completed' : 'failed';
+    updateAutoCycle(cycle.id, {
+      status: cycleStatus,
+      output: result.finalOutput,
+      cost_usd: result.totalCostUsd,
+      duration_ms: result.totalDurationMs,
+      completed_at: now,
+    });
+
+    // Update session totals
+    updateAutoSession(this.currentSessionId, {
+      total_cycles: session.total_cycles + 1,
+      total_cost_usd: session.total_cost_usd + result.totalCostUsd,
+    });
+
+    // Track consecutive failures
+    if (!result.success) {
+      this.consecutiveFailures++;
+    } else {
+      this.consecutiveFailures = 0;
+      this.retryCount = 0;
+    }
+
+    // Emit cycle event
+    this.emit({
+      type: result.success ? 'cycle_complete' : 'cycle_failed',
+      data: {
+        cycleId: cycle.id,
+        cycleNumber: this.cycleNumber,
+        phase: 'pipeline',
+        cost_usd: result.totalCostUsd,
+        duration_ms: result.totalDurationMs,
+      },
+      timestamp: now,
+    });
+
+    // Update state for next cycle
+    this.lastPhase = 'pipeline' as AutoPhase;
+    this.lastCycleStatus = cycleStatus as AutoCycleStatus;
+    this.lastFindingId = findingToFix?.id ?? null;
+    this.cycleNumber++;
+    this.currentCycleId = null;
+    this.currentFindingId = null;
+    this.executor = null;
+
+    // Write SESSION-STATE.md
+    this.updateStateFile();
+
+    // Continue
+    this.processNextCycle();
   }
 
   private handleCycleComplete(result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean }): void {
