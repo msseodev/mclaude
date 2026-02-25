@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useRunStatus } from '@/hooks/useRunStatus';
@@ -54,11 +54,14 @@ interface SidebarProps {
 export function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>(() => {
-    if (typeof window === 'undefined') return 'manual';
+  const [mode, setMode] = useState<Mode>('manual');
+
+  useEffect(() => {
     const saved = localStorage.getItem(MODE_KEY);
-    return saved === 'auto' ? 'auto' : 'manual';
-  });
+    if (saved === 'auto') {
+      setMode('auto');
+    }
+  }, []);
 
   // Always call both hooks (Rules of Hooks require consistent call order)
   const { status: manualStatus } = useRunStatus();
