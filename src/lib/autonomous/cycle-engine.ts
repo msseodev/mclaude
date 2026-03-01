@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { ClaudeExecutor } from '../claude-executor';
+import { caffeinateManager } from '../caffeinate';
 import { getSetting } from '../db';
 import { PipelineExecutor } from './pipeline-executor';
 import type { PipelineResult } from './pipeline-executor';
@@ -135,6 +136,8 @@ class CycleEngineImpl {
     this.eventBuffer = [];
     this.currentOutput = '';
 
+    caffeinateManager.acquire();
+
     this.emit({
       type: 'session_status',
       data: { status: 'running', sessionId: session.id },
@@ -189,6 +192,7 @@ class CycleEngineImpl {
       });
     }
 
+    caffeinateManager.release();
     this.resetState();
   }
 
@@ -228,6 +232,8 @@ class CycleEngineImpl {
       data: { status: 'paused', sessionId: this.currentSessionId },
       timestamp: new Date().toISOString(),
     });
+
+    caffeinateManager.release();
   }
 
   async resume(midSessionPrompt?: string): Promise<void> {
@@ -241,6 +247,7 @@ class CycleEngineImpl {
     }
 
     this.isPaused = false;
+    caffeinateManager.acquire();
 
     if (midSessionPrompt?.trim()) {
       createAutoUserPrompt({
@@ -951,6 +958,7 @@ class CycleEngineImpl {
         timestamp: new Date().toISOString(),
       });
       this.isPaused = true;
+      caffeinateManager.release();
       return false;
     }
 
@@ -967,6 +975,7 @@ class CycleEngineImpl {
       timestamp: new Date().toISOString(),
     });
 
+    caffeinateManager.release();
     this.updateStateFile();
     this.resetState();
   }

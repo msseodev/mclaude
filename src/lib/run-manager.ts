@@ -1,4 +1,5 @@
 import { ClaudeExecutor } from './claude-executor';
+import { caffeinateManager } from './caffeinate';
 import {
   getPrompts,
   getPrompt,
@@ -141,6 +142,8 @@ class RunManagerImpl {
     this.currentOutput = '';
     this.currentPlanItemRunId = null;
 
+    caffeinateManager.acquire();
+
     this.emit({
       type: 'session_status',
       data: { status: 'running', sessionId: this.currentSessionId },
@@ -163,6 +166,7 @@ class RunManagerImpl {
           timestamp: new Date().toISOString(),
         });
       }
+      caffeinateManager.release();
       this.executor = null;
       this.currentSessionId = null;
       this.currentExecutionId = null;
@@ -197,6 +201,7 @@ class RunManagerImpl {
         timestamp: new Date().toISOString(),
       });
       this.currentSessionId = null;
+      caffeinateManager.release();
       return;
     }
 
@@ -264,6 +269,7 @@ class RunManagerImpl {
       this.currentSessionId = null;
       this.currentPlanId = null;
       this.currentPlanItemRunId = null;
+      caffeinateManager.release();
       return;
     }
 
@@ -480,6 +486,8 @@ class RunManagerImpl {
   }
 
   async stopQueue(): Promise<void> {
+    const hadSession = !!this.currentSessionId;
+
     // Kill executor if running
     if (this.executor) {
       this.executor.kill();
@@ -526,9 +534,14 @@ class RunManagerImpl {
     this.currentExecutionId = null;
     this.currentPlanId = null;
     this.currentPlanItemRunId = null;
+    if (hadSession) {
+      caffeinateManager.release();
+    }
   }
 
   async pauseQueue(): Promise<void> {
+    const hadSession = !!this.currentSessionId;
+
     // Kill executor if running
     if (this.executor) {
       this.executor.kill();
@@ -573,6 +586,10 @@ class RunManagerImpl {
         timestamp: new Date().toISOString(),
       });
     }
+
+    if (hadSession) {
+      caffeinateManager.release();
+    }
   }
 
   async resumeQueue(): Promise<void> {
@@ -584,6 +601,8 @@ class RunManagerImpl {
     if (!session || session.status !== 'paused') {
       throw new Error('Session is not paused');
     }
+
+    caffeinateManager.acquire();
 
     updateSession(this.currentSessionId, { status: 'running' });
 
