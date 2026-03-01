@@ -70,7 +70,7 @@ export function PipelineViewer({ cycleNumber, agents, currentAgentId, output, ou
       <div
         ref={outputRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-lg p-4 font-mono text-sm leading-relaxed"
+        className="flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-lg p-4 font-mono text-sm leading-relaxed text-gray-100"
         style={{ backgroundColor: '#1E1E1E', minHeight: 300 }}
       >
         {output.length === 0 ? (

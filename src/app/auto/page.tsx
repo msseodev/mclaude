@@ -434,8 +434,8 @@ export default function AutoDashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
-                {recentCycles.map((cycle) => (
-                  <tr key={cycle.cycle_number}>
+                {recentCycles.map((cycle, i) => (
+                  <tr key={`${cycle.cycle_number}-${cycle.phase}-${i}`}>
                     <td className="px-4 py-2 text-sm text-gray-900">{cycle.cycle_number}</td>
                     <td className="px-4 py-2 text-sm text-gray-600">{cycle.phase}</td>
                     <td className="px-4 py-2 text-sm text-gray-600">
@@ -906,7 +906,7 @@ function OutputViewer({
     <div
       ref={outputRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-lg p-4 font-mono text-sm leading-relaxed"
+      className="flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-lg p-4 font-mono text-sm leading-relaxed text-gray-100"
       style={{ backgroundColor: '#1E1E1E', minHeight: 300 }}
     >
       {entries.length === 0 ? (

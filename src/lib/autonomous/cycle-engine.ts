@@ -6,6 +6,7 @@ import { caffeinateManager } from '../caffeinate';
 import { getSetting } from '../db';
 import { PipelineExecutor } from './pipeline-executor';
 import type { PipelineResult } from './pipeline-executor';
+import { summarizeAgentOutputs } from './summarizer';
 import type { AutoUserPrompt } from './types';
 import {
   createAutoSession,
@@ -601,6 +602,29 @@ class CycleEngineImpl {
 
     const now = new Date().toISOString();
 
+    // Extract findings from Product Designer output
+    const designerRun = result.agentRuns.find(r => r.agent_name === 'Product Designer');
+    if (designerRun?.output) {
+      const extractor = new FindingExtractor();
+      const existingFindings = getAutoFindings({ session_id: this.currentSessionId });
+      const newFindings = extractor.extract(designerRun.output, existingFindings);
+      for (const f of newFindings) {
+        const created = createAutoFinding({
+          session_id: this.currentSessionId,
+          category: f.category,
+          priority: f.priority,
+          title: f.title,
+          description: f.description,
+          file_path: f.file_path,
+        });
+        this.emit({
+          type: 'finding_created',
+          data: { finding: created },
+          timestamp: now,
+        });
+      }
+    }
+
     // Handle QA failure — create finding for failed tests (no rollback in v2)
     if (result.qaResult && !result.qaResult.passed) {
       createAutoFinding({
@@ -1006,7 +1030,17 @@ class CycleEngineImpl {
         : targetProject;
       const docDir = path.join(resolvedPath, 'docs', 'cycle');
       await fs.mkdir(docDir, { recursive: true });
-      const doc = buildCycleDoc(cycleNumber, finding, result, timestamp);
+
+      // Summarize agent outputs using one-shot Claude sessions
+      let agentSummaries: Map<string, string> | undefined;
+      try {
+        const claudeBinary = getSetting('claude_binary') || 'claude';
+        agentSummaries = await summarizeAgentOutputs(claudeBinary, result.agentRuns);
+      } catch {
+        // Fall back to truncated output if summarization fails
+      }
+
+      const doc = buildCycleDoc(cycleNumber, finding, result, timestamp, agentSummaries);
       await fs.writeFile(path.join(docDir, `cycle-${cycleNumber}.md`), doc, 'utf-8');
     } catch {
       // Don't fail the cycle if doc writing fails
@@ -1079,6 +1113,7 @@ export function buildCycleDoc(
   finding: { priority: string; title: string; category: string } | null,
   result: PipelineResult,
   timestamp: string,
+  agentSummaries?: Map<string, string>,
 ): string {
   const durationMin = (result.totalDurationMs / 60000).toFixed(1);
   const cost = result.totalCostUsd.toFixed(2);
@@ -1110,8 +1145,13 @@ export function buildCycleDoc(
     if (!run || run.status === 'skipped' || !run.output) {
       lines.push('skipped');
     } else {
-      const output = run.output.length > 500 ? run.output.slice(0, 500) + '...' : run.output;
-      lines.push(output);
+      const summary = agentSummaries?.get(name);
+      if (summary) {
+        lines.push(summary);
+      } else {
+        const output = run.output.length > 500 ? run.output.slice(0, 500) + '...' : run.output;
+        lines.push(output);
+      }
     }
     lines.push('');
   }
@@ -1123,8 +1163,13 @@ export function buildCycleDoc(
       if (run.status === 'skipped' || !run.output) {
         lines.push('skipped');
       } else {
-        const output = run.output.length > 500 ? run.output.slice(0, 500) + '...' : run.output;
-        lines.push(output);
+        const summary = agentSummaries?.get(run.agent_name);
+        if (summary) {
+          lines.push(summary);
+        } else {
+          const output = run.output.length > 500 ? run.output.slice(0, 500) + '...' : run.output;
+          lines.push(output);
+        }
       }
       lines.push('');
     }

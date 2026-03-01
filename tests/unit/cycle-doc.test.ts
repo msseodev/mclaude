@@ -217,4 +217,90 @@ describe('buildCycleDoc', () => {
     expect(doc).toContain('- **Cost**: $0.00');
     expect(doc).toContain('- **Duration**: 0.0min');
   });
+
+  it('uses summary from agentSummaries when available', () => {
+    const result = makePipelineResult({
+      agentRuns: [
+        makeAgentRun({ agent_name: 'Developer', status: 'completed', output: 'A'.repeat(600) }),
+        makeAgentRun({ agent_name: 'Reviewer', status: 'completed', output: 'Some review output' }),
+      ],
+      totalCostUsd: 0.50,
+      totalDurationMs: 60000,
+    });
+
+    const summaries = new Map<string, string>();
+    summaries.set('Developer', '- Implemented login fix\n- Added unit tests');
+    summaries.set('Reviewer', '- Code quality is good\n- No issues found');
+
+    const doc = buildCycleDoc(1, null, result, '2026-03-01T00:00:00.000Z', summaries);
+
+    expect(doc).toContain('### Developer');
+    expect(doc).toContain('- Implemented login fix\n- Added unit tests');
+    expect(doc).not.toContain('A'.repeat(500));
+
+    expect(doc).toContain('### Reviewer');
+    expect(doc).toContain('- Code quality is good\n- No issues found');
+    expect(doc).not.toContain('Some review output');
+  });
+
+  it('falls back to truncated output when no summary exists for an agent', () => {
+    const longOutput = 'B'.repeat(600);
+    const result = makePipelineResult({
+      agentRuns: [
+        makeAgentRun({ agent_name: 'Developer', status: 'completed', output: longOutput }),
+        makeAgentRun({ agent_name: 'Reviewer', status: 'completed', output: 'Short review' }),
+      ],
+      totalCostUsd: 0,
+      totalDurationMs: 0,
+    });
+
+    // Only provide summary for Reviewer, not Developer
+    const summaries = new Map<string, string>();
+    summaries.set('Reviewer', '- Reviewed code successfully');
+
+    const doc = buildCycleDoc(1, null, result, '2026-03-01T00:00:00.000Z', summaries);
+
+    // Developer should fall back to truncated output
+    expect(doc).toContain('B'.repeat(500) + '...');
+    // Reviewer should use the summary
+    expect(doc).toContain('- Reviewed code successfully');
+    expect(doc).not.toContain('Short review');
+  });
+
+  it('handles empty agentSummaries map by falling back to truncation', () => {
+    const longOutput = 'C'.repeat(600);
+    const result = makePipelineResult({
+      agentRuns: [
+        makeAgentRun({ agent_name: 'Developer', status: 'completed', output: longOutput }),
+      ],
+      totalCostUsd: 0,
+      totalDurationMs: 0,
+    });
+
+    const emptySummaries = new Map<string, string>();
+    const doc = buildCycleDoc(1, null, result, '2026-03-01T00:00:00.000Z', emptySummaries);
+
+    // Should fall back to truncated output
+    expect(doc).toContain('C'.repeat(500) + '...');
+    expect(doc).not.toContain('C'.repeat(501));
+  });
+
+  it('uses summary for non-standard agents when available', () => {
+    const result = makePipelineResult({
+      agentRuns: [
+        makeAgentRun({ agent_name: 'Custom Agent', status: 'completed', output: 'D'.repeat(600) }),
+      ],
+      totalCostUsd: 0,
+      totalDurationMs: 0,
+    });
+
+    const summaries = new Map<string, string>();
+    summaries.set('Custom Agent', '- Custom agent did custom things');
+
+    const doc = buildCycleDoc(1, null, result, '2026-03-01T00:00:00.000Z', summaries);
+
+    expect(doc).toContain('### Custom Agent');
+    expect(doc).toContain('- Custom agent did custom things');
+    expect(doc).not.toContain('D'.repeat(500));
+  });
 });

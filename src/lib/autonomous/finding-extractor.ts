@@ -14,7 +14,21 @@ export class FindingExtractor {
 
     try {
       const parsed = JSON.parse(jsonBlock);
-      const rawFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
+
+      // Support both "findings" format and Product Designer's "features" format
+      let rawFindings: Record<string, unknown>[];
+      if (Array.isArray(parsed.findings)) {
+        rawFindings = parsed.findings;
+      } else if (Array.isArray(parsed.features)) {
+        // Convert features to findings format
+        rawFindings = parsed.features.map((f: Record<string, unknown>) => ({
+          ...f,
+          category: f.category || 'improvement',
+          file_path: Array.isArray(f.relevant_files) ? f.relevant_files[0] : f.file_path,
+        }));
+      } else {
+        rawFindings = [];
+      }
 
       return rawFindings
         .map((f: Record<string, unknown>) => this.validateFinding(f))
