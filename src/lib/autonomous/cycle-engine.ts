@@ -6,7 +6,7 @@ import { caffeinateManager } from '../caffeinate';
 import { getSetting } from '../db';
 import { PipelineExecutor } from './pipeline-executor';
 import type { PipelineResult } from './pipeline-executor';
-import { summarizeAgentOutputs } from './summarizer';
+import { summarizeAgentOutputs, generateCommitMessage } from './summarizer';
 import type { AutoUserPrompt } from './types';
 import {
   createAutoSession,
@@ -676,7 +676,17 @@ class CycleEngineImpl {
     // Git commit on success
     if (result.success && settings.auto_commit) {
       const gitManager = new GitManager(session.target_project);
-      const commitMsg = buildCycleCommitMessage(this.cycleNumber, findingToFix, result);
+      const checkpoint = cycle.git_checkpoint;
+      let commitMsg: string;
+      try {
+        const diff = checkpoint ? await gitManager.getDiff(checkpoint) : '';
+        const claudeBinary = getSetting('claude_binary') || 'claude';
+        commitMsg = diff
+          ? await generateCommitMessage(claudeBinary, diff, this.cycleNumber)
+          : buildCycleCommitMessage(this.cycleNumber, findingToFix, result);
+      } catch {
+        commitMsg = buildCycleCommitMessage(this.cycleNumber, findingToFix, result);
+      }
       await gitManager.commitCycleResult(commitMsg);
     }
 
