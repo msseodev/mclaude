@@ -479,12 +479,12 @@ export default function AutoDashboardPage() {
       <AddPromptModal
         open={showAddPromptModal}
         onClose={() => setShowAddPromptModal(false)}
-        onAdd={async (content: string) => {
+        onAdd={async (content: string, activeForCycles?: number) => {
           try {
             const res = await fetch('/api/auto/prompts', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ content }),
+              body: JSON.stringify({ content, activeForCycles }),
             });
             if (!res.ok) {
               const data = await res.json().catch(() => ({}));
@@ -740,7 +740,7 @@ function AddPromptModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onAdd: (content: string) => Promise<void>;
+  onAdd: (content: string, activeForCycles?: number) => Promise<void>;
 }) {
   return (
     <Modal
@@ -760,16 +760,18 @@ function AddPromptModalContent({
   onAdd,
 }: {
   onClose: () => void;
-  onAdd: (content: string) => Promise<void>;
+  onAdd: (content: string, activeForCycles?: number) => Promise<void>;
 }) {
   const [content, setContent] = useState('');
+  const [activeForCycles, setActiveForCycles] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit() {
     if (!content.trim()) return;
     setSubmitting(true);
     try {
-      await onAdd(content.trim());
+      const cycles = activeForCycles ? parseInt(activeForCycles, 10) : undefined;
+      await onAdd(content.trim(), cycles && cycles > 0 ? cycles : undefined);
     } finally {
       setSubmitting(false);
     }
@@ -777,21 +779,37 @@ function AddPromptModalContent({
 
   return (
     <>
-      <div>
-        <label htmlFor="add-prompt-content" className="mb-1 block text-sm font-medium text-gray-700">
-          Prompt
-        </label>
-        <textarea
-          id="add-prompt-content"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Enter a prompt to add to the queue..."
-          rows={4}
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
-        <p className="mt-1 text-xs text-gray-500">
-          This prompt will be queued and used in the next cycle
-        </p>
+      <div className="space-y-4">
+        <div>
+          <label htmlFor="add-prompt-content" className="mb-1 block text-sm font-medium text-gray-700">
+            Prompt
+          </label>
+          <textarea
+            id="add-prompt-content"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Enter a prompt to add to the queue..."
+            rows={4}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label htmlFor="add-prompt-cycles" className="mb-1 block text-sm font-medium text-gray-700">
+            Active for (cycles)
+          </label>
+          <input
+            id="add-prompt-cycles"
+            type="number"
+            min="1"
+            value={activeForCycles}
+            onChange={(e) => setActiveForCycles(e.target.value)}
+            placeholder="Leave empty for permanent"
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Number of cycles this instruction stays active. Leave empty to keep it permanent.
+          </p>
+        </div>
       </div>
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>

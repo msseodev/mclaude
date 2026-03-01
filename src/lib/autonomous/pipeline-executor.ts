@@ -61,7 +61,7 @@ export class PipelineExecutor {
       : enabledAgents;
 
     const userPrompts = getAutoUserPrompts(this.session.id);
-    const userPromptText = buildUserPrompt(this.session, userPrompts);
+    const userPromptText = buildUserPrompt(this.session, userPrompts, this.cycleNumber);
 
     const stateManager = new StateManager(this.session.target_project);
     const stateContext = await stateManager.readState() || '';

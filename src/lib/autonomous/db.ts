@@ -75,6 +75,13 @@ export function initAutoTables(): void {
     db.exec('ALTER TABLE auto_findings ADD COLUMN failure_history TEXT');
   }
 
+  // Migration: add active_for_cycles to user prompts
+  try {
+    db.exec('ALTER TABLE auto_user_prompts ADD COLUMN active_for_cycles INTEGER DEFAULT NULL');
+  } catch {
+    // Column already exists
+  }
+
   // v2 tables
   db.exec(`
     CREATE TABLE IF NOT EXISTS auto_user_prompts (
@@ -380,11 +387,11 @@ export function getAllAutoSettings(): AutoSettings {
 
 // --- User Prompts CRUD ---
 
-export function createAutoUserPrompt(data: { session_id: string; content: string; added_at_cycle: number }): AutoUserPrompt {
+export function createAutoUserPrompt(data: { session_id: string; content: string; added_at_cycle: number; active_for_cycles?: number | null }): AutoUserPrompt {
   const db = getDb();
   const id = uuidv4();
   const now = new Date().toISOString();
-  db.prepare('INSERT INTO auto_user_prompts (id, session_id, content, added_at_cycle, created_at) VALUES (?, ?, ?, ?, ?)').run(id, data.session_id, data.content, data.added_at_cycle, now);
+  db.prepare('INSERT INTO auto_user_prompts (id, session_id, content, added_at_cycle, active_for_cycles, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, data.session_id, data.content, data.added_at_cycle, data.active_for_cycles ?? null, now);
   return db.prepare('SELECT * FROM auto_user_prompts WHERE id = ?').get(id) as AutoUserPrompt;
 }
 

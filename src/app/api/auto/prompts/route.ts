@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   initAutoTables();
   try {
     const body = await request.json();
-    const { content } = body;
+    const { content, activeForCycles } = body;
     if (!content?.trim()) {
       return NextResponse.json({ error: 'content is required' }, { status: 400 });
     }
@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
       session_id: status.sessionId,
       content: content.trim(),
       added_at_cycle: status.currentCycle,
+      active_for_cycles: typeof activeForCycles === 'number' && activeForCycles > 0 ? activeForCycles : null,
     });
     autoEngine.emitUserPromptAdded(prompt);
     return NextResponse.json(prompt, { status: 201 });

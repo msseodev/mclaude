@@ -81,6 +81,7 @@ export interface AutoUserPrompt {
   session_id: string;
   content: string;
   added_at_cycle: number;
+  active_for_cycles: number | null;  // null = permanent
   created_at: string;
 }
 
