@@ -1235,7 +1235,11 @@ export function buildCycleDoc(
   return lines.join('\n');
 }
 
-// Global singleton (HMR-safe)
+// Global singleton (HMR-safe: patch prototype so new methods are available on cached instance)
 const globalForAutoEngine = globalThis as unknown as { autoEngine: CycleEngineImpl };
-export const autoEngine = globalForAutoEngine.autoEngine || new CycleEngineImpl();
-globalForAutoEngine.autoEngine = autoEngine;
+if (!globalForAutoEngine.autoEngine) {
+  globalForAutoEngine.autoEngine = new CycleEngineImpl();
+} else {
+  Object.setPrototypeOf(globalForAutoEngine.autoEngine, CycleEngineImpl.prototype);
+}
+export const autoEngine = globalForAutoEngine.autoEngine;
