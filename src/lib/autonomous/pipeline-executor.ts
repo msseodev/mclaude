@@ -10,7 +10,8 @@ import {
 } from './db';
 import { GitManager } from './git-manager';
 import { StateManager } from './state-manager';
-import { buildAgentContext } from './agent-context-builder';
+import { buildAgentContext, StructuredAgentOutput } from './agent-context-builder';
+import { parseAgentOutput } from './output-parser';
 import { buildUserPrompt } from './user-prompt-builder';
 import type {
   AutoAgent,
@@ -66,6 +67,7 @@ export class PipelineExecutor {
     const stateContext = await stateManager.readState() || '';
 
     const previousOutputs = new Map<string, string>();
+    const structuredOutputs: StructuredAgentOutput[] = [];
     const allAgentRuns: AutoAgentRun[] = [];
     let totalCostUsd = 0;
     let totalDurationMs = 0;
@@ -94,6 +96,7 @@ export class PipelineExecutor {
         userPrompt: userPromptText,
         sessionState: stateContext,
         previousOutputs,
+        structuredOutputs,
         finding: this.finding,
         gitDiff,
       });
@@ -117,6 +120,15 @@ export class PipelineExecutor {
       totalDurationMs += result.agentRun.duration_ms ?? 0;
       previousOutputs.set(agent.display_name, result.agentRun.output);
 
+      // Parse and store structured output
+      const parsed = parseAgentOutput(agent.display_name, result.agentRun.output);
+      structuredOutputs.push({
+        agentName: agent.display_name,
+        summary: parsed.summary,
+        fullOutputId: result.agentRun.id,
+        structuredData: parsed.structuredData,
+      });
+
       // Emit agent_complete or agent_failed
       this.emit({
         type: result.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
@@ -130,6 +142,45 @@ export class PipelineExecutor {
         timestamp: new Date().toISOString(),
       });
 
+      // Developer -> Designer feedback loop
+      if (agent.name === 'developer' && result.agentRun.status === 'completed') {
+        const devParsed = parseDeveloperOutput(result.agentRun.output);
+        if (devParsed.blocked) {
+          const loopResult = await this.designerDeveloperLoop(
+            agents,
+            settings.max_designer_iterations,
+            userPromptText,
+            stateContext,
+            structuredOutputs,
+            previousOutputs,
+            devParsed.blockerReason,
+          );
+
+          allAgentRuns.push(...loopResult.additionalRuns);
+          totalCostUsd += loopResult.additionalCost;
+          totalDurationMs += loopResult.additionalDuration;
+
+          if (loopResult.latestDeveloperOutput) {
+            previousOutputs.set('Developer', loopResult.latestDeveloperOutput);
+          }
+
+          // Merge updated structured outputs
+          structuredOutputs.push(...loopResult.additionalStructuredOutputs);
+
+          if (loopResult.abortedByRateLimit) {
+            return {
+              success: false,
+              agentRuns: allAgentRuns,
+              finalOutput: '',
+              totalCostUsd,
+              totalDurationMs,
+              abortedByRateLimit: true,
+              rateLimitInfo: loopResult.rateLimitInfo,
+            };
+          }
+        }
+      }
+
       // Reviewer <-> Developer loop
       if (agent.name === 'reviewer' && result.agentRun.status === 'completed') {
         const reviewResult = parseReviewOutput(result.agentRun.output);
@@ -141,6 +192,7 @@ export class PipelineExecutor {
             stateContext,
             previousOutputs,
             reviewResult.feedback,
+            structuredOutputs,
           );
 
           allAgentRuns.push(...loopResult.additionalRuns);
@@ -275,6 +327,7 @@ export class PipelineExecutor {
     stateContext: string,
     previousOutputs: Map<string, string>,
     initialFeedback: string,
+    structuredOutputs: StructuredAgentOutput[],
   ): Promise<{
     additionalRuns: AutoAgentRun[];
     additionalCost: number;
@@ -310,6 +363,7 @@ export class PipelineExecutor {
         userPrompt,
         sessionState: stateContext,
         previousOutputs,
+        structuredOutputs,
         finding: this.finding,
         reviewFeedback: feedback,
       });
@@ -345,6 +399,7 @@ export class PipelineExecutor {
         userPrompt,
         sessionState: stateContext,
         previousOutputs,
+        structuredOutputs,
         gitDiff,
       });
 
@@ -375,6 +430,134 @@ export class PipelineExecutor {
     }
 
     return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, latestDeveloperOutput: latestDevOutput };
+  }
+
+  private async designerDeveloperLoop(
+    agents: AutoAgent[],
+    maxIterations: number,
+    userPrompt: string,
+    stateContext: string,
+    structuredOutputs: StructuredAgentOutput[],
+    previousOutputs: Map<string, string>,
+    blockerReason: string,
+  ): Promise<{
+    additionalRuns: AutoAgentRun[];
+    additionalCost: number;
+    additionalDuration: number;
+    latestDeveloperOutput?: string;
+    additionalStructuredOutputs: StructuredAgentOutput[];
+    abortedByRateLimit?: boolean;
+    rateLimitInfo?: RateLimitInfo;
+  }> {
+    const designer = agents.find(a => a.name === 'product_designer');
+    const developer = agents.find(a => a.name === 'developer');
+    if (!designer || !developer) {
+      return { additionalRuns: [], additionalCost: 0, additionalDuration: 0, additionalStructuredOutputs: [] };
+    }
+
+    const runs: AutoAgentRun[] = [];
+    const newStructuredOutputs: StructuredAgentOutput[] = [];
+    let totalCost = 0;
+    let totalDuration = 0;
+    let feedback = blockerReason;
+    let latestDevOutput: string | undefined;
+
+    for (let i = 0; i < maxIterations; i++) {
+      if (this.aborted) break;
+
+      // Emit designer_iteration
+      this.emit({
+        type: 'designer_iteration',
+        data: { iteration: i + 1, maxIterations, feedback },
+        timestamp: new Date().toISOString(),
+      });
+
+      // Re-run Designer with feedback
+      const designerContext = buildAgentContext(designer, {
+        userPrompt,
+        sessionState: stateContext,
+        previousOutputs,
+        structuredOutputs,
+        finding: this.finding,
+        designerFeedback: feedback,
+      });
+
+      this.emit({
+        type: 'agent_start',
+        data: { agentId: designer.id, agentName: designer.display_name, cycleId: this.cycleId },
+        timestamp: new Date().toISOString(),
+      });
+
+      const designerResult = await this.runSingleAgent(designer, designerContext, i + 2);
+      if (designerResult.rateLimited) {
+        return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByRateLimit: true, rateLimitInfo: designerResult.rateLimitInfo };
+      }
+      runs.push(designerResult.agentRun);
+      totalCost += designerResult.agentRun.cost_usd ?? 0;
+      totalDuration += designerResult.agentRun.duration_ms ?? 0;
+      previousOutputs.set(designer.display_name, designerResult.agentRun.output);
+
+      const designerParsed = parseAgentOutput(designer.display_name, designerResult.agentRun.output);
+      newStructuredOutputs.push({
+        agentName: designer.display_name,
+        summary: designerParsed.summary,
+        fullOutputId: designerResult.agentRun.id,
+        structuredData: designerParsed.structuredData,
+      });
+
+      this.emit({
+        type: designerResult.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
+        data: { agentId: designer.id, agentName: designer.display_name, status: designerResult.agentRun.status },
+        timestamp: new Date().toISOString(),
+      });
+
+      // Re-run Developer with revised spec
+      const devContext = buildAgentContext(developer, {
+        userPrompt,
+        sessionState: stateContext,
+        previousOutputs,
+        structuredOutputs: [...structuredOutputs, ...newStructuredOutputs],
+        finding: this.finding,
+      });
+
+      this.emit({
+        type: 'agent_start',
+        data: { agentId: developer.id, agentName: developer.display_name, cycleId: this.cycleId },
+        timestamp: new Date().toISOString(),
+      });
+
+      const devResult = await this.runSingleAgent(developer, devContext, i + 2);
+      if (devResult.rateLimited) {
+        return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByRateLimit: true, rateLimitInfo: devResult.rateLimitInfo };
+      }
+      runs.push(devResult.agentRun);
+      totalCost += devResult.agentRun.cost_usd ?? 0;
+      totalDuration += devResult.agentRun.duration_ms ?? 0;
+      latestDevOutput = devResult.agentRun.output;
+      previousOutputs.set(developer.display_name, devResult.agentRun.output);
+
+      const devParsedOutput = parseAgentOutput(developer.display_name, devResult.agentRun.output);
+      newStructuredOutputs.push({
+        agentName: developer.display_name,
+        summary: devParsedOutput.summary,
+        fullOutputId: devResult.agentRun.id,
+        structuredData: devParsedOutput.structuredData,
+      });
+
+      this.emit({
+        type: devResult.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
+        data: { agentId: developer.id, agentName: developer.display_name, status: devResult.agentRun.status },
+        timestamp: new Date().toISOString(),
+      });
+
+      // Check if developer is still blocked
+      const devBlockerCheck = parseDeveloperOutput(devResult.agentRun.output);
+      if (!devBlockerCheck.blocked) break;
+
+      feedback = devBlockerCheck.blockerReason;
+    }
+
+    return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, latestDeveloperOutput: latestDevOutput, additionalStructuredOutputs: newStructuredOutputs };
   }
 
   abort(): void {
@@ -413,4 +596,27 @@ export function parseQAOutput(output: string): { passed: boolean; testOutput: st
     }
   } catch { /* fallback */ }
   return { passed: true, testOutput: output };
+}
+
+export function parseDeveloperOutput(output: string): { blocked: boolean; blockerReason: string } {
+  const blockerPatterns = [
+    /BLOCKER:\s*([\s\S]*?)(?:\n\n|\n(?=[A-Z])|$)/i,
+    /BLOCKED:\s*([\s\S]*?)(?:\n\n|\n(?=[A-Z])|$)/i,
+    /CANNOT IMPLEMENT:\s*([\s\S]*?)(?:\n\n|\n(?=[A-Z])|$)/i,
+    /IMPLEMENTATION FAILED:\s*([\s\S]*?)(?:\n\n|\n(?=[A-Z])|$)/i,
+    /SPEC ISSUE:\s*([\s\S]*?)(?:\n\n|\n(?=[A-Z])|$)/i,
+  ];
+  for (const pattern of blockerPatterns) {
+    const match = output.match(pattern);
+    if (match) return { blocked: true, blockerReason: match[1].trim() };
+  }
+  // Also check for JSON structured blocker
+  try {
+    const jsonMatch = output.match(/\{[\s\S]*"blocked"[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.blocked === true) return { blocked: true, blockerReason: parsed.reason || parsed.blocker_reason || 'Unknown blocker' };
+    }
+  } catch { /* fallback */ }
+  return { blocked: false, blockerReason: '' };
 }

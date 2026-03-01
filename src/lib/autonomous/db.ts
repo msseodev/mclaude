@@ -69,6 +69,12 @@ export function initAutoTables(): void {
     db.exec('ALTER TABLE auto_sessions ADD COLUMN initial_prompt TEXT');
   }
 
+  // Migration: add failure_history column to auto_findings
+  const findingCols = db.prepare("PRAGMA table_info(auto_findings)").all() as Array<{ name: string }>;
+  if (!findingCols.some(c => c.name === 'failure_history')) {
+    db.exec('ALTER TABLE auto_findings ADD COLUMN failure_history TEXT');
+  }
+
   // v2 tables
   db.exec(`
     CREATE TABLE IF NOT EXISTS auto_user_prompts (
@@ -132,6 +138,7 @@ export function initAutoTables(): void {
   insertSetting.run('review_max_iterations', '2');
   insertSetting.run('skip_designer_for_fixes', 'true');
   insertSetting.run('require_initial_prompt', 'false');
+  insertSetting.run('max_designer_iterations', '2');
 }
 
 // Initialize tables on first import
@@ -269,7 +276,7 @@ export function getAutoFinding(id: string): AutoFinding | undefined {
   return db.prepare('SELECT * FROM auto_findings WHERE id = ?').get(id) as AutoFinding | undefined;
 }
 
-export function updateAutoFinding(id: string, data: Partial<Pick<AutoFinding, 'status' | 'priority' | 'retry_count' | 'resolved_by_cycle_id' | 'description'>>): AutoFinding | undefined {
+export function updateAutoFinding(id: string, data: Partial<Pick<AutoFinding, 'status' | 'priority' | 'retry_count' | 'resolved_by_cycle_id' | 'description' | 'failure_history'>>): AutoFinding | undefined {
   const db = getDb();
   const existing = getAutoFinding(id);
   if (!existing) return undefined;
@@ -280,10 +287,11 @@ export function updateAutoFinding(id: string, data: Partial<Pick<AutoFinding, 's
   const retryCount = data.retry_count !== undefined ? data.retry_count : existing.retry_count;
   const resolvedByCycleId = data.resolved_by_cycle_id !== undefined ? data.resolved_by_cycle_id : existing.resolved_by_cycle_id;
   const description = data.description ?? existing.description;
+  const failureHistory = data.failure_history !== undefined ? data.failure_history : (existing.failure_history ?? null);
 
   db.prepare(
-    'UPDATE auto_findings SET status = ?, priority = ?, retry_count = ?, resolved_by_cycle_id = ?, description = ?, updated_at = ? WHERE id = ?'
-  ).run(status, priority, retryCount, resolvedByCycleId, description, now, id);
+    'UPDATE auto_findings SET status = ?, priority = ?, retry_count = ?, resolved_by_cycle_id = ?, description = ?, failure_history = ?, updated_at = ? WHERE id = ?'
+  ).run(status, priority, retryCount, resolvedByCycleId, description, failureHistory, now, id);
 
   return getAutoFinding(id);
 }
@@ -366,6 +374,7 @@ export function getAllAutoSettings(): AutoSettings {
     review_max_iterations: Number(getAutoSetting('review_max_iterations') ?? '2'),
     skip_designer_for_fixes: getAutoSetting('skip_designer_for_fixes') !== 'false',
     require_initial_prompt: getAutoSetting('require_initial_prompt') === 'true',
+    max_designer_iterations: Number(getAutoSetting('max_designer_iterations') ?? '2'),
   };
 }
 

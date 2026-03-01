@@ -15,12 +15,12 @@ export class StateManager {
   /**
    * Write SESSION-STATE.md with current session state.
    */
-  async writeState(session: AutoSession, cycles: AutoCycle[], findings: AutoFinding[]): Promise<void> {
+  async writeState(session: AutoSession, cycles: AutoCycle[], findings: AutoFinding[], codebaseSummary?: string): Promise<void> {
     // 1. Ensure .mclaude directory exists
     await fs.mkdir(path.join(this.workingDirectory, STATE_DIR), { recursive: true });
 
     // 2. Build markdown content
-    const content = this.buildStateContent(session, cycles, findings);
+    const content = this.buildStateContent(session, cycles, findings, codebaseSummary);
 
     // 3. Write file
     await fs.writeFile(this.statePath, content, 'utf-8');
@@ -48,7 +48,7 @@ export class StateManager {
     }
   }
 
-  private buildStateContent(session: AutoSession, cycles: AutoCycle[], findings: AutoFinding[]): string {
+  private buildStateContent(session: AutoSession, cycles: AutoCycle[], findings: AutoFinding[], codebaseSummary?: string): string {
     const now = new Date().toISOString();
     const openFindings = findings.filter(f => f.status === 'open' || f.status === 'in_progress');
     const resolvedFindings = findings.filter(f => f.status === 'resolved');
@@ -69,7 +69,7 @@ export class StateManager {
 ## Project Context
 - **Path**: ${session.target_project}
 
-## Current Status
+${codebaseSummary ? codebaseSummary + '\n' : ''}## Current Status
 - Active Findings: ${openFindings.length} (P0: ${p0.length}, P1: ${p1.length}, P2: ${p2.length}, P3: ${p3.length})
 - Resolved This Session: ${resolvedFindings.length}
 
@@ -131,7 +131,7 @@ export class StateManager {
       md += `|-------|-------|---------|--------|------|\n`;
       for (const c of recentCycles.reverse()) {
         const findingLabel = c.finding_id ? c.finding_id.slice(0, 8) : '\u2014';
-        const statusLabel = c.status === 'completed' ? 'done' : c.status === 'failed' ? 'fail' : c.status === 'rolled_back' ? 'rollback' : c.status;
+        const statusLabel = c.status === 'completed' ? 'done' : c.status === 'failed' ? 'fail' : c.status;
         const costLabel = c.cost_usd != null ? `$${c.cost_usd.toFixed(2)}` : '\u2014';
         md += `| ${c.cycle_number} | ${c.phase} | ${findingLabel} | ${statusLabel} | ${costLabel} |\n`;
       }

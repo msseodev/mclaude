@@ -1,11 +1,20 @@
-import type { AutoAgent, AutoFinding } from './types';
+import type { AutoAgent, AutoFinding, FailureHistoryEntry } from './types';
+
+export interface StructuredAgentOutput {
+  agentName: string;
+  summary: string;
+  fullOutputId: string;
+  structuredData: Record<string, unknown> | null;
+}
 
 export interface AgentContext {
   userPrompt: string;
   sessionState: string;
   previousOutputs: Map<string, string>;
+  structuredOutputs?: StructuredAgentOutput[];
   finding?: AutoFinding | null;
   reviewFeedback?: string;
+  designerFeedback?: string;
   gitDiff?: string;
 }
 
@@ -27,17 +36,52 @@ export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
 
   // 4. Finding info (for fix cycles)
   if (ctx.finding) {
-    parts.push(`\n[Issue to Fix]\n- Title: ${ctx.finding.title}\n- Description: ${ctx.finding.description}\n- File: ${ctx.finding.file_path ?? 'N/A'}`);
+    const findingParts = [
+      `\n[Issue to Fix]`,
+      `- Title: ${ctx.finding.title}`,
+      `- Description: ${ctx.finding.description}`,
+      `- File: ${ctx.finding.file_path ?? 'N/A'}`,
+    ];
+
+    if (ctx.finding.failure_history) {
+      try {
+        const history: FailureHistoryEntry[] = JSON.parse(ctx.finding.failure_history);
+        if (history.length > 0) {
+          findingParts.push('');
+          findingParts.push('IMPORTANT: Previous approaches failed. Try a different strategy.');
+          for (const entry of history) {
+            findingParts.push(`- Attempt (${entry.timestamp}): ${entry.approach} -> Failed: ${entry.failure_reason}`);
+          }
+        }
+      } catch { /* ignore malformed history */ }
+    }
+
+    parts.push(findingParts.join('\n'));
   }
 
   // 5. Previous agent outputs
-  for (const [agentName, output] of ctx.previousOutputs) {
-    parts.push(`\n[${agentName} Output]\n${output}`);
+  if (ctx.structuredOutputs && ctx.structuredOutputs.length > 0) {
+    for (const so of ctx.structuredOutputs) {
+      const soParts = [`\n[${so.agentName} Output Summary]`, so.summary];
+      if (so.structuredData) {
+        soParts.push(JSON.stringify(so.structuredData, null, 2));
+      }
+      parts.push(soParts.join('\n'));
+    }
+  } else {
+    for (const [agentName, output] of ctx.previousOutputs) {
+      parts.push(`\n[${agentName} Output]\n${output}`);
+    }
   }
 
   // 6. Reviewer feedback (for Developer re-run)
   if (ctx.reviewFeedback) {
     parts.push(`\n[Reviewer Feedback]\nPlease address the following issues:\n${ctx.reviewFeedback}`);
+  }
+
+  // 6.5. Designer feedback (for Designer re-run)
+  if (ctx.designerFeedback) {
+    parts.push(`\n[Developer Feedback]\nThe developer encountered issues implementing the spec. Please revise:\n${ctx.designerFeedback}`);
   }
 
   // 7. Git diff (for Reviewer)

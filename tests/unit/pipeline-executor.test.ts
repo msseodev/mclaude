@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseReviewOutput, parseQAOutput } from '../../src/lib/autonomous/pipeline-executor';
+import { parseReviewOutput, parseQAOutput, parseDeveloperOutput } from '../../src/lib/autonomous/pipeline-executor';
 
 describe('parseReviewOutput', () => {
   it('parses approved review', () => {
@@ -81,5 +81,76 @@ describe('parseQAOutput', () => {
   it('defaults to passed on empty output', () => {
     const result = parseQAOutput('');
     expect(result.passed).toBe(true);
+  });
+});
+
+describe('parseDeveloperOutput', () => {
+  it('detects BLOCKER: pattern', () => {
+    const output = 'I tried to implement the feature but:\n\nBLOCKER: The spec requires a database schema that conflicts with existing tables';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(true);
+    expect(result.blockerReason).toBe('The spec requires a database schema that conflicts with existing tables');
+  });
+
+  it('detects BLOCKED: pattern', () => {
+    const output = 'BLOCKED: Missing API endpoint definition in the spec';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(true);
+    expect(result.blockerReason).toBe('Missing API endpoint definition in the spec');
+  });
+
+  it('detects CANNOT IMPLEMENT: pattern', () => {
+    const output = 'CANNOT IMPLEMENT: The required dependency is incompatible with the current Node version';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(true);
+    expect(result.blockerReason).toBe('The required dependency is incompatible with the current Node version');
+  });
+
+  it('detects JSON structured blocker', () => {
+    const output = 'Here is my status:\n\n{"blocked": true, "reason": "No authentication module available"}';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(true);
+    expect(result.blockerReason).toBe('No authentication module available');
+  });
+
+  it('returns blocked false for normal developer output', () => {
+    const output = 'I implemented the feature successfully. All files have been updated and tests pass.';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(false);
+    expect(result.blockerReason).toBe('');
+  });
+
+  it('does not trigger on lowercase "blocker" in a sentence', () => {
+    const output = 'There was no blocker during implementation. Everything went smoothly and the feature is complete.';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(false);
+    expect(result.blockerReason).toBe('');
+  });
+
+  it('detects IMPLEMENTATION FAILED: pattern', () => {
+    const output = 'IMPLEMENTATION FAILED: Build errors in TypeScript compilation';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(true);
+    expect(result.blockerReason).toBe('Build errors in TypeScript compilation');
+  });
+
+  it('detects SPEC ISSUE: pattern', () => {
+    const output = 'SPEC ISSUE: The acceptance criteria are contradictory';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(true);
+    expect(result.blockerReason).toBe('The acceptance criteria are contradictory');
+  });
+
+  it('handles JSON blocker with blocker_reason field', () => {
+    const output = '{"blocked": true, "blocker_reason": "Missing config file"}';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(true);
+    expect(result.blockerReason).toBe('Missing config file');
+  });
+
+  it('returns blocked false when JSON has blocked=false', () => {
+    const output = '{"blocked": false, "reason": ""}';
+    const result = parseDeveloperOutput(output);
+    expect(result.blocked).toBe(false);
   });
 });

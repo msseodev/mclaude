@@ -27,12 +27,14 @@ import { PromptBuilder } from './prompt-builder';
 import { FindingExtractor } from './finding-extractor';
 import { GitManager } from './git-manager';
 import { StateManager } from './state-manager';
+import { CodebaseScanner } from './codebase-scanner';
 import type {
   AutoSSEEvent,
   AutoRunStatus,
   AutoSessionStatus,
   AutoPhase,
   AutoCycleStatus,
+  FailureHistoryEntry,
 } from './types';
 import type { SSEEvent, RateLimitInfo } from '../types';
 
@@ -61,6 +63,7 @@ class CycleEngineImpl {
   private consecutiveFailures: number = 0;
   private isPaused: boolean = false;
   private isStopping: boolean = false;
+  private codebaseSummaryCache: string | null = null;
 
   // SSE listener management (identical pattern to RunManager)
   addListener(listener: (event: AutoSSEEvent) => void): () => void {
@@ -133,6 +136,15 @@ class CycleEngineImpl {
       data: { status: 'running', sessionId: session.id },
       timestamp: new Date().toISOString(),
     });
+
+    // Scan codebase for SESSION-STATE.md context
+    try {
+      const scanner = new CodebaseScanner(project);
+      const summary = await scanner.scan();
+      this.codebaseSummaryCache = scanner.formatAsMarkdown(summary);
+    } catch {
+      this.codebaseSummaryCache = null;
+    }
 
     // Start the cycle loop
     this.processNextCycle();
@@ -578,22 +590,8 @@ class CycleEngineImpl {
 
     const now = new Date().toISOString();
 
-    // Handle QA failure
+    // Handle QA failure — create finding for failed tests (no rollback in v2)
     if (result.qaResult && !result.qaResult.passed) {
-      // Rollback
-      if (settings.auto_commit && gitCheckpoint) {
-        const gitManager = new GitManager(session.target_project);
-        const rollbackSuccess = await gitManager.rollback(gitCheckpoint);
-        if (rollbackSuccess) {
-          updateAutoCycle(cycle.id, { status: 'rolled_back' });
-          this.emit({
-            type: 'git_rollback',
-            data: { checkpoint: gitCheckpoint },
-            timestamp: now,
-          });
-        }
-      }
-      // Create finding for failed tests
       createAutoFinding({
         session_id: this.currentSessionId,
         category: 'test_failure',
@@ -615,14 +613,22 @@ class CycleEngineImpl {
         timestamp: now,
       });
     } else if (!result.success && findingToFix) {
-      // Increment retry count
+      // Increment retry count and record failure history
       const f = getAutoFinding(findingToFix.id);
       if (f) {
         const newRetryCount = f.retry_count + 1;
+        // Append to failure history
+        const existingHistory: FailureHistoryEntry[] = f.failure_history ? JSON.parse(f.failure_history) : [];
+        existingHistory.push({
+          cycle_id: cycle.id,
+          approach: result.finalOutput.slice(0, 500),
+          failure_reason: result.qaResult?.testOutput?.slice(0, 500) || 'Pipeline failed',
+          timestamp: now,
+        });
         if (newRetryCount >= f.max_retries) {
-          updateAutoFinding(findingToFix.id, { status: 'wont_fix', retry_count: newRetryCount });
+          updateAutoFinding(findingToFix.id, { status: 'wont_fix', retry_count: newRetryCount, failure_history: JSON.stringify(existingHistory) });
         } else {
-          updateAutoFinding(findingToFix.id, { status: 'open', retry_count: newRetryCount });
+          updateAutoFinding(findingToFix.id, { status: 'open', retry_count: newRetryCount, failure_history: JSON.stringify(existingHistory) });
         }
       }
     }
@@ -959,6 +965,7 @@ class CycleEngineImpl {
     this.isPaused = false;
     this.isStopping = false;
     this.retryCount = 0;
+    this.codebaseSummaryCache = null;
   }
 
   private async updateStateFile(): Promise<void> {
@@ -969,7 +976,7 @@ class CycleEngineImpl {
       const cycles = getAutoCyclesBySession(this.currentSessionId);
       const findings = getAutoFindings({ session_id: this.currentSessionId });
       const stateManager = new StateManager(session.target_project);
-      await stateManager.writeState(session, cycles, findings);
+      await stateManager.writeState(session, cycles, findings, this.codebaseSummaryCache ?? undefined);
     } catch {
       // Don't fail the cycle if state file write fails
     }

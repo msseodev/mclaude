@@ -21,6 +21,7 @@ export default function AutoSettingsPage() {
     review_max_iterations: 2,
     skip_designer_for_fixes: true,
     require_initial_prompt: false,
+    max_designer_iterations: 2,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

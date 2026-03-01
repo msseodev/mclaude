@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildAgentContext } from '../../src/lib/autonomous/agent-context-builder';
+import type { StructuredAgentOutput } from '../../src/lib/autonomous/agent-context-builder';
 import type { AutoAgent, AutoFinding } from '../../src/lib/autonomous/types';
 
 function makeAgent(overrides: Partial<AutoAgent> = {}): AutoAgent {
@@ -31,6 +32,7 @@ function makeFinding(overrides: Partial<AutoFinding> = {}): AutoFinding {
     retry_count: 0,
     max_retries: 3,
     resolved_by_cycle_id: null,
+    failure_history: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
@@ -161,5 +163,111 @@ describe('buildAgentContext', () => {
     expect(result).not.toContain('[Reviewer Feedback]');
     expect(result).not.toContain('[Code Changes');
     expect(result).toBe('You are a Senior Developer.');
+  });
+
+  it('includes failure history from finding when present', () => {
+    const failureHistory = JSON.stringify([
+      {
+        cycle_id: 'cycle-1',
+        approach: 'Used try-catch block',
+        failure_reason: 'Did not handle null case',
+        timestamp: '2026-01-01T00:00:00Z',
+      },
+      {
+        cycle_id: 'cycle-2',
+        approach: 'Added null check',
+        failure_reason: 'Wrong variable checked',
+        timestamp: '2026-01-02T00:00:00Z',
+      },
+    ]);
+
+    const result = buildAgentContext(makeAgent(), {
+      userPrompt: '',
+      sessionState: '',
+      previousOutputs: new Map(),
+      finding: makeFinding({ failure_history: failureHistory }),
+    });
+
+    expect(result).toContain('IMPORTANT: Previous approaches failed');
+    expect(result).toContain('Used try-catch block');
+    expect(result).toContain('Did not handle null case');
+    expect(result).toContain('Added null check');
+    expect(result).toContain('Wrong variable checked');
+  });
+
+  it('does not include failure history section when failure_history is null', () => {
+    const result = buildAgentContext(makeAgent(), {
+      userPrompt: '',
+      sessionState: '',
+      previousOutputs: new Map(),
+      finding: makeFinding({ failure_history: null }),
+    });
+
+    expect(result).toContain('[Issue to Fix]');
+    expect(result).not.toContain('Previous approaches failed');
+    expect(result).not.toContain('Attempt');
+  });
+
+  it('uses structured output summaries when structuredOutputs provided', () => {
+    const structuredOutputs: StructuredAgentOutput[] = [
+      {
+        agentName: 'Product Designer',
+        summary: 'Proposed 2 features: [P0] Login; [P1] Dashboard',
+        fullOutputId: 'run-1',
+        structuredData: { features: [] },
+      },
+      {
+        agentName: 'Developer',
+        summary: 'Implementation completed successfully.',
+        fullOutputId: 'run-2',
+        structuredData: null,
+      },
+    ];
+
+    const result = buildAgentContext(makeAgent({ name: 'reviewer', display_name: 'Reviewer' }), {
+      userPrompt: '',
+      sessionState: '',
+      previousOutputs: new Map(),
+      structuredOutputs,
+    });
+
+    expect(result).toContain('[Product Designer Output Summary]');
+    expect(result).toContain('Proposed 2 features');
+    expect(result).toContain('[Developer Output Summary]');
+    expect(result).toContain('Implementation completed successfully');
+    // Should NOT fall back to raw previousOutputs format
+    expect(result).not.toContain('[Product Designer Output]\n');
+  });
+
+  it('includes designer feedback section when designerFeedback provided', () => {
+    const result = buildAgentContext(
+      makeAgent({ name: 'product_designer', display_name: 'Product Designer' }),
+      {
+        userPrompt: '',
+        sessionState: '',
+        previousOutputs: new Map(),
+        designerFeedback: 'The authentication flow needs OAuth support',
+      },
+    );
+
+    expect(result).toContain('[Developer Feedback]');
+    expect(result).toContain('The developer encountered issues implementing the spec');
+    expect(result).toContain('The authentication flow needs OAuth support');
+  });
+
+  it('falls back to raw previousOutputs when structuredOutputs is empty', () => {
+    const outputs = new Map<string, string>();
+    outputs.set('Product Designer', 'Raw designer output here');
+
+    const result = buildAgentContext(makeAgent(), {
+      userPrompt: '',
+      sessionState: '',
+      previousOutputs: outputs,
+      structuredOutputs: [],
+    });
+
+    expect(result).toContain('[Product Designer Output]');
+    expect(result).toContain('Raw designer output here');
+    expect(result).not.toContain('Output Summary');
   });
 });

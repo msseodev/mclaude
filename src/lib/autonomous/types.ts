@@ -51,8 +51,16 @@ export interface AutoFinding {
   retry_count: number;
   max_retries: number;
   resolved_by_cycle_id: string | null;
+  failure_history: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface FailureHistoryEntry {
+  cycle_id: string;
+  approach: string;
+  failure_reason: string;
+  timestamp: string;
 }
 
 export interface AutoAgent {
@@ -105,6 +113,7 @@ export interface AutoSettings {
   review_max_iterations: number;
   skip_designer_for_fixes: boolean;
   require_initial_prompt: boolean;
+  max_designer_iterations: number;
 }
 
 // --- SSE Event types ---
@@ -119,6 +128,7 @@ export type AutoSSEEventType =
   | 'test_result'
   | 'git_checkpoint'
   | 'git_rollback'
+  | 'designer_iteration'
   | 'text_delta'
   | 'tool_start'
   | 'tool_end'
