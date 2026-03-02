@@ -120,10 +120,11 @@ class CycleEngineImpl {
 
     // Get settings
     const settings = getAllAutoSettings();
-    const project = targetProject || settings.target_project;
-    if (!project) {
+    const rawProject = targetProject || settings.target_project;
+    if (!rawProject) {
       throw new Error('Target project path is required');
     }
+    const project = resolveTildePath(rawProject);
 
     // Create session
     const session = createAutoSession(project, undefined, initialPrompt);
@@ -1069,9 +1070,7 @@ class CycleEngineImpl {
     timestamp: string,
   ): Promise<void> {
     try {
-      const resolvedPath = targetProject.startsWith('~')
-        ? path.join(os.homedir(), targetProject.slice(1))
-        : targetProject;
+      const resolvedPath = resolveTildePath(targetProject);
       const docDir = path.join(resolvedPath, 'docs', 'cycle');
       await fs.mkdir(docDir, { recursive: true });
 
@@ -1233,6 +1232,14 @@ export function buildCycleDoc(
   lines.push('');
 
   return lines.join('\n');
+}
+
+// --- Exported utility ---
+
+export function resolveTildePath(p: string): string {
+  return p.startsWith('~')
+    ? path.join(os.homedir(), p.slice(1))
+    : p;
 }
 
 // Global singleton (HMR-safe: patch prototype so new methods are available on cached instance)
