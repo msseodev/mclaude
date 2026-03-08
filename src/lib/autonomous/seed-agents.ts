@@ -6,6 +6,7 @@ interface AgentSeed {
   role_description: string;
   system_prompt: string;
   pipeline_order: number;
+  model: string;
 }
 
 const BUILTIN_AGENTS: AgentSeed[] = [
@@ -13,6 +14,7 @@ const BUILTIN_AGENTS: AgentSeed[] = [
     name: 'product_designer',
     display_name: 'Product Designer',
     role_description: 'Analyzes the current app state and defines improvements, enhancements, and new features to build',
+    model: 'claude-opus-4-6',
     system_prompt: `You are a Product Designer.
 
 Analyze the current state of the application by exploring both the codebase and the running app, then define what should be improved, enhanced, or newly developed in this cycle.
@@ -83,6 +85,7 @@ You MUST output in the following JSON format:
     name: 'developer',
     display_name: 'Developer',
     role_description: 'Implements code based on feature specs',
+    model: 'claude-opus-4-6',
     system_prompt: `You are a Senior Developer.
 
 Implement the features described in the Feature Spec from the Product Designer.
@@ -112,6 +115,7 @@ Do NOT output a BLOCKER if you can reasonably implement the feature. Only use it
     name: 'reviewer',
     display_name: 'Reviewer',
     role_description: 'Reviews code quality, bugs, and design consistency',
+    model: 'claude-opus-4-6',
     system_prompt: `You are a Senior Code Reviewer.
 
 Review the Developer's code changes for quality, correctness, and adherence to the Feature Spec.
@@ -146,6 +150,7 @@ You MUST output in the following JSON format:
     name: 'qa_engineer',
     display_name: 'QA Engineer',
     role_description: 'Performs E2E testing using mobile-mcp and Playwright to validate features against acceptance criteria',
+    model: 'claude-opus-4-6',
     system_prompt: `You are a QA Engineer specializing in End-to-End testing.
 
 Validate that the implemented features meet the acceptance criteria by writing E2E test cases as a markdown file, then executing each test case on the running application.
@@ -279,29 +284,64 @@ You MUST output in the following JSON format:
 
 export function seedBuiltinAgents(db: Database.Database): void {
   const now = new Date().toISOString();
-  const stmt = db.prepare(`
-    INSERT INTO auto_agents
-    (id, name, display_name, role_description, system_prompt, pipeline_order, enabled, is_builtin, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      display_name = excluded.display_name,
-      role_description = excluded.role_description,
-      system_prompt = excluded.system_prompt,
-      pipeline_order = excluded.pipeline_order,
-      updated_at = excluded.updated_at
-    WHERE is_builtin = 1
-  `);
 
-  for (const agent of BUILTIN_AGENTS) {
-    stmt.run(
-      `builtin-${agent.name}`,
-      agent.name,
-      agent.display_name,
-      agent.role_description,
-      agent.system_prompt,
-      agent.pipeline_order,
-      now,
-      now
-    );
+  // Check if model column exists (may not exist on first seed before migration)
+  const cols = db.prepare("PRAGMA table_info(auto_agents)").all() as Array<{ name: string }>;
+  const hasModelColumn = cols.some(c => c.name === 'model');
+
+  if (hasModelColumn) {
+    const stmt = db.prepare(`
+      INSERT INTO auto_agents
+      (id, name, display_name, role_description, system_prompt, pipeline_order, model, enabled, is_builtin, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        display_name = excluded.display_name,
+        role_description = excluded.role_description,
+        system_prompt = excluded.system_prompt,
+        pipeline_order = excluded.pipeline_order,
+        model = excluded.model,
+        updated_at = excluded.updated_at
+      WHERE is_builtin = 1
+    `);
+
+    for (const agent of BUILTIN_AGENTS) {
+      stmt.run(
+        `builtin-${agent.name}`,
+        agent.name,
+        agent.display_name,
+        agent.role_description,
+        agent.system_prompt,
+        agent.pipeline_order,
+        agent.model,
+        now,
+        now
+      );
+    }
+  } else {
+    const stmt = db.prepare(`
+      INSERT INTO auto_agents
+      (id, name, display_name, role_description, system_prompt, pipeline_order, enabled, is_builtin, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        display_name = excluded.display_name,
+        role_description = excluded.role_description,
+        system_prompt = excluded.system_prompt,
+        pipeline_order = excluded.pipeline_order,
+        updated_at = excluded.updated_at
+      WHERE is_builtin = 1
+    `);
+
+    for (const agent of BUILTIN_AGENTS) {
+      stmt.run(
+        `builtin-${agent.name}`,
+        agent.name,
+        agent.display_name,
+        agent.role_description,
+        agent.system_prompt,
+        agent.pipeline_order,
+        now,
+        now
+      );
+    }
   }
 }

@@ -56,28 +56,24 @@ ${truncated}
 export async function generateCommitMessage(
   claudeBinary: string,
   gitDiff: string,
-  cycleNumber: number,
 ): Promise<string> {
   const truncatedDiff = gitDiff.length > MAX_INPUT_LENGTH
     ? gitDiff.slice(0, MAX_INPUT_LENGTH) + '\n...(truncated)'
     : gitDiff;
 
   const prompt = `Generate a git commit message for the following changes. Follow conventional commit format:
-- Type: feat, bugfix, refactor, docs, config, test
+- Type: feat, fix, refactor, docs, test, chore
 - Subject line: imperative mood, under 70 chars, no period
 - Body: 1-3 sentences explaining what and why (not how)
 
-Prefix the subject with [mclaude-auto] cycle ${cycleNumber}.
-
 Output ONLY the commit message, nothing else.
 
----
-${truncatedDiff}
----`;
+Changes:
+${truncatedDiff}`;
 
   const result = await runClaudeOneShot(claudeBinary, prompt);
   if (!result) {
-    return `[mclaude-auto] cycle ${cycleNumber}: Pipeline cycle completed`;
+    return '';
   }
   return result;
 }

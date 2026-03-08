@@ -107,12 +107,66 @@ describe('GitManager.commitCycleResult', () => {
       return {} as ReturnType<typeof execFile>;
     });
 
-    const multiLineMsg = '[mclaude-auto] cycle 3: Fix login bug\n\nFinding: P0 - Fix login bug\nAgents: Developer(completed) -> Reviewer(completed)\nCost: $0.50 | Duration: 2.3min';
+    const multiLineMsg = 'fix: Fix login bug\n\nFinding: P0 - Fix login bug';
     const gm = new GitManager('/tmp/test-project');
     await gm.commitCycleResult(multiLineMsg);
 
     const commitCall = callOrder.find(args => args[0] === 'commit');
     expect(commitCall).toBeDefined();
     expect(commitCall![2]).toBe(multiLineMsg);
+  });
+});
+
+describe('GitManager.createCheckpoint', () => {
+  beforeEach(() => {
+    mockExecFile.mockReset();
+  });
+
+  it('returns current HEAD SHA without creating a commit', async () => {
+    const callOrder: string[][] = [];
+    mockExecFile.mockImplementation((_cmd: unknown, args: unknown, _opts: unknown, cb: unknown) => {
+      const argsArr = args as string[];
+      const callback = cb as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+      callOrder.push([...argsArr]);
+      if (argsArr[0] === 'rev-parse' && argsArr[1] === 'HEAD') {
+        callback(null, { stdout: 'headsha789\n', stderr: '' });
+      } else {
+        callback(null, { stdout: '', stderr: '' });
+      }
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const gm = new GitManager('/tmp/test-project');
+    const sha = await gm.createCheckpoint();
+
+    expect(sha).toBe('headsha789');
+
+    // Should only call rev-parse HEAD, no add/commit
+    expect(callOrder).toHaveLength(1);
+    expect(callOrder[0]).toEqual(['rev-parse', 'HEAD']);
+
+    // Verify no git add or git commit was called
+    const addCalls = callOrder.filter(args => args[0] === 'add');
+    expect(addCalls).toHaveLength(0);
+    const commitCalls = callOrder.filter(args => args[0] === 'commit');
+    expect(commitCalls).toHaveLength(0);
+  });
+
+  it('returns null when rev-parse fails', async () => {
+    mockExecFile.mockImplementation((_cmd: unknown, args: unknown, _opts: unknown, cb: unknown) => {
+      const argsArr = args as string[];
+      const callback = cb as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+      if (argsArr[0] === 'rev-parse') {
+        callback(new Error('fatal: not a git repository'), { stdout: '', stderr: '' });
+      } else {
+        callback(null, { stdout: '', stderr: '' });
+      }
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const gm = new GitManager('/tmp/test-project');
+    const sha = await gm.createCheckpoint();
+
+    expect(sha).toBeNull();
   });
 });

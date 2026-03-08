@@ -127,6 +127,16 @@ export function initAutoTables(): void {
   // Seed built-in agents
   seedBuiltinAgents(db);
 
+  // Migration: add model column to auto_agents
+  try {
+    db.exec("ALTER TABLE auto_agents ADD COLUMN model TEXT NOT NULL DEFAULT 'claude-opus-4-6'");
+  } catch {
+    // Column already exists
+  }
+
+  // Re-seed to populate model for built-in agents
+  seedBuiltinAgents(db);
+
   // Insert default settings if not exist
   const insertSetting = db.prepare(
     'INSERT OR IGNORE INTO auto_settings (key, value) VALUES (?, ?)'
@@ -421,15 +431,16 @@ export function getAutoAgent(id: string): AutoAgent | undefined {
   return db.prepare('SELECT * FROM auto_agents WHERE id = ?').get(id) as AutoAgent | undefined;
 }
 
-export function createAutoAgent(data: { name: string; display_name: string; role_description: string; system_prompt: string; pipeline_order: number }): AutoAgent {
+export function createAutoAgent(data: { name: string; display_name: string; role_description: string; system_prompt: string; pipeline_order: number; model?: string }): AutoAgent {
   const db = getDb();
   const id = uuidv4();
   const now = new Date().toISOString();
-  db.prepare('INSERT INTO auto_agents (id, name, display_name, role_description, system_prompt, pipeline_order, enabled, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)').run(id, data.name, data.display_name, data.role_description, data.system_prompt, data.pipeline_order, now, now);
+  const model = data.model || 'claude-opus-4-6';
+  db.prepare('INSERT INTO auto_agents (id, name, display_name, role_description, system_prompt, pipeline_order, model, enabled, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)').run(id, data.name, data.display_name, data.role_description, data.system_prompt, data.pipeline_order, model, now, now);
   return getAutoAgent(id)!;
 }
 
-export function updateAutoAgent(id: string, data: Partial<Pick<AutoAgent, 'display_name' | 'role_description' | 'system_prompt' | 'pipeline_order' | 'enabled'>>): AutoAgent | undefined {
+export function updateAutoAgent(id: string, data: Partial<Pick<AutoAgent, 'display_name' | 'role_description' | 'system_prompt' | 'pipeline_order' | 'enabled' | 'model'>>): AutoAgent | undefined {
   const db = getDb();
   const existing = getAutoAgent(id);
   if (!existing) return undefined;
@@ -439,7 +450,8 @@ export function updateAutoAgent(id: string, data: Partial<Pick<AutoAgent, 'displ
   const system_prompt = data.system_prompt ?? existing.system_prompt;
   const pipeline_order = data.pipeline_order ?? existing.pipeline_order;
   const enabled = data.enabled !== undefined ? data.enabled : existing.enabled;
-  db.prepare('UPDATE auto_agents SET display_name = ?, role_description = ?, system_prompt = ?, pipeline_order = ?, enabled = ?, updated_at = ? WHERE id = ?').run(display_name, role_description, system_prompt, pipeline_order, enabled, now, id);
+  const model = data.model ?? existing.model;
+  db.prepare('UPDATE auto_agents SET display_name = ?, role_description = ?, system_prompt = ?, pipeline_order = ?, enabled = ?, model = ?, updated_at = ? WHERE id = ?').run(display_name, role_description, system_prompt, pipeline_order, enabled, model, now, id);
   return getAutoAgent(id);
 }
 

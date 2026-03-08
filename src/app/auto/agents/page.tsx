@@ -12,7 +12,20 @@ interface AgentFormData {
   role_description: string;
   system_prompt: string;
   pipeline_order: number;
+  model: string;
 }
+
+const MODEL_OPTIONS = [
+  { value: 'claude-opus-4-6', label: 'Opus 4.6 (Recommended)' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+] as const;
+
+const MODEL_SHORT_LABELS: Record<string, string> = {
+  'claude-opus-4-6': 'Opus 4.6',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
+  'claude-haiku-4-5-20251001': 'Haiku 4.5',
+};
 
 const emptyForm: AgentFormData = {
   name: '',
@@ -20,6 +33,7 @@ const emptyForm: AgentFormData = {
   role_description: '',
   system_prompt: '',
   pipeline_order: 99,
+  model: 'claude-opus-4-6',
 };
 
 function slugify(text: string): string {
@@ -56,6 +70,7 @@ function AgentEditModal({
           role_description: agent.role_description,
           system_prompt: agent.system_prompt,
           pipeline_order: agent.pipeline_order,
+          model: agent.model || 'claude-opus-4-6',
         });
         setNameManuallyEdited(true);
       } else {
@@ -186,6 +201,24 @@ function AgentEditModal({
             style={{ minHeight: '200px' }}
             placeholder="Enter the system prompt for this agent..."
           />
+        </div>
+
+        <div>
+          <label htmlFor="agent-model" className="mb-1 block text-sm font-medium text-gray-700">
+            Model
+          </label>
+          <select
+            id="agent-model"
+            value={form.model}
+            onChange={(e) => setForm({ ...form, model: e.target.value })}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {MODEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div>
@@ -324,6 +357,9 @@ export default function AgentsPage() {
                         Built-in
                       </span>
                     ) : null}
+                    <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                      {MODEL_SHORT_LABELS[agent.model] || agent.model}
+                    </span>
                   </div>
                   {agent.role_description && (
                     <p className="mt-0.5 text-sm text-gray-500">

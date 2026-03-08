@@ -474,7 +474,7 @@ class CycleEngineImpl {
     let gitCheckpoint: string | null = null;
     if (settings.auto_commit) {
       const gitManager = new GitManager(session.target_project);
-      gitCheckpoint = await gitManager.createCheckpoint(`before-cycle-${this.cycleNumber}`);
+      gitCheckpoint = await gitManager.createCheckpoint();
     }
 
     // Build prompt
@@ -589,7 +589,7 @@ class CycleEngineImpl {
     let gitCheckpoint: string | null = null;
     if (settings.auto_commit) {
       const gitManager = new GitManager(session.target_project);
-      gitCheckpoint = await gitManager.createCheckpoint(`before-cycle-${this.cycleNumber}`);
+      gitCheckpoint = await gitManager.createCheckpoint();
     }
 
     // Create cycle with phase='pipeline'
@@ -637,6 +637,7 @@ class CycleEngineImpl {
     const now = new Date().toISOString();
 
     // Extract findings from Product Designer output
+    const createdFindings: Array<{ priority: string; title: string; category: string }> = [];
     const designerRun = result.agentRuns.find(r => r.agent_name === 'Product Designer');
     if (designerRun?.output) {
       const extractor = new FindingExtractor();
@@ -651,6 +652,7 @@ class CycleEngineImpl {
           description: f.description,
           file_path: f.file_path,
         });
+        createdFindings.push(created);
         this.emit({
           type: 'finding_created',
           data: { finding: created },
@@ -704,7 +706,7 @@ class CycleEngineImpl {
 
     // Write cycle summary doc (before git commit so it's included)
     if (result.success) {
-      await this.writeCycleDoc(session.target_project, this.cycleNumber, findingToFix, result, now);
+      await this.writeCycleDoc(session.target_project, this.cycleNumber, findingToFix, result, now, createdFindings);
     }
 
     // Git commit on success
@@ -715,11 +717,12 @@ class CycleEngineImpl {
       try {
         const diff = checkpoint ? await gitManager.getDiff(checkpoint) : '';
         const claudeBinary = getSetting('claude_binary') || 'claude';
-        commitMsg = diff
-          ? await generateCommitMessage(claudeBinary, diff, this.cycleNumber)
-          : buildCycleCommitMessage(this.cycleNumber, findingToFix, result);
+        const generated = diff
+          ? await generateCommitMessage(claudeBinary, diff)
+          : '';
+        commitMsg = generated || buildCycleCommitMessage(this.cycleNumber, findingToFix);
       } catch {
-        commitMsg = buildCycleCommitMessage(this.cycleNumber, findingToFix, result);
+        commitMsg = buildCycleCommitMessage(this.cycleNumber, findingToFix);
       }
       await gitManager.commitCycleResult(commitMsg);
     }
@@ -1068,10 +1071,13 @@ class CycleEngineImpl {
     finding: { priority: string; title: string; category: string } | null,
     result: PipelineResult,
     timestamp: string,
+    createdFindings?: Array<{ priority: string; title: string; category: string }>,
   ): Promise<void> {
     try {
       const resolvedPath = resolveTildePath(targetProject);
-      const docDir = path.join(resolvedPath, 'docs', 'cycle');
+      const date = timestamp.slice(0, 10);  // "2026-03-02"
+      const time = timestamp.slice(11, 19).replace(/:/g, '');  // "040707"
+      const docDir = path.join(resolvedPath, 'docs', 'cycle', date);
       await fs.mkdir(docDir, { recursive: true });
 
       // Summarize agent outputs using one-shot Claude sessions
@@ -1083,8 +1089,8 @@ class CycleEngineImpl {
         // Fall back to truncated output if summarization fails
       }
 
-      const doc = buildCycleDoc(cycleNumber, finding, result, timestamp, agentSummaries);
-      await fs.writeFile(path.join(docDir, `cycle-${cycleNumber}.md`), doc, 'utf-8');
+      const doc = buildCycleDoc(cycleNumber, finding, result, timestamp, agentSummaries, createdFindings);
+      await fs.writeFile(path.join(docDir, `cycle-${cycleNumber}-${time}.md`), doc, 'utf-8');
     } catch {
       // Don't fail the cycle if doc writing fails
     }
@@ -1110,45 +1116,50 @@ class CycleEngineImpl {
 export function buildCycleCommitMessage(
   cycleNumber: number,
   finding: { priority: string; title: string } | null,
-  result: PipelineResult,
 ): string {
   // Title line
   const title = finding
-    ? `[mclaude-auto] cycle ${cycleNumber}: ${finding.title}`
-    : `[mclaude-auto] cycle ${cycleNumber}: Pipeline cycle completed`;
+    ? `fix: ${finding.title}`
+    : `chore: autonomous cycle ${cycleNumber} changes`;
 
   // Body lines
-  const lines: string[] = [title, ''];
+  const lines: string[] = [title];
 
   if (finding) {
-    lines.push(`Finding: ${finding.priority} - ${finding.title}`);
+    lines.push('', `Finding: ${finding.priority} - ${finding.title}`);
   }
-
-  // Agent summary
-  const agentSummary = result.agentRuns
-    .map(r => `${r.agent_name}(${r.status})`)
-    .join(' → ');
-  lines.push(`Agents: ${agentSummary}`);
-
-  // Cost and duration
-  const durationMin = result.totalDurationMs > 0
-    ? (result.totalDurationMs / 60000).toFixed(1)
-    : '0';
-  lines.push(`Cost: $${result.totalCostUsd.toFixed(2)} | Duration: ${durationMin}min`);
 
   return lines.join('\n');
 }
 
 export function parseQACounts(testOutput: string): { passed: number | null; failed: number | null; total: number | null } {
+  // Try JSON summary format first (QA agent outputs structured JSON)
+  // Iterate over balanced {...} candidates to avoid greedy over-matching
+  const braceMatches = testOutput.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g);
+  for (const m of braceMatches) {
+    try {
+      const parsed = JSON.parse(m[0]);
+      if (parsed.summary && typeof parsed.summary === 'object') {
+        const s = parsed.summary;
+        return {
+          passed: typeof s.passed === 'number' ? s.passed : null,
+          failed: typeof s.failed === 'number' ? s.failed : null,
+          total: typeof s.total === 'number' ? s.total : null,
+        };
+      }
+    } catch { continue; }
+  }
+
+  // Regex fallback for text-based test output
   const passedMatch = testOutput.match(/(\d+)\s*passed/i);
   const failedMatch = testOutput.match(/(\d+)\s*failed/i);
   const totalMatch = testOutput.match(/(\d+)\s*total/i);
 
-  const passed = passedMatch ? parseInt(passedMatch[1], 10) : null;
-  const failed = failedMatch ? parseInt(failedMatch[1], 10) : null;
-  const total = totalMatch ? parseInt(totalMatch[1], 10) : null;
-
-  return { passed, failed, total };
+  return {
+    passed: passedMatch ? parseInt(passedMatch[1], 10) : null,
+    failed: failedMatch ? parseInt(failedMatch[1], 10) : null,
+    total: totalMatch ? parseInt(totalMatch[1], 10) : null,
+  };
 }
 
 export function buildCycleDoc(
@@ -1157,9 +1168,20 @@ export function buildCycleDoc(
   result: PipelineResult,
   timestamp: string,
   agentSummaries?: Map<string, string>,
+  createdFindings?: Array<{ priority: string; title: string; category: string }>,
 ): string {
   const durationMin = (result.totalDurationMs / 60000).toFixed(1);
   const cost = result.totalCostUsd.toFixed(2);
+
+  // Determine which finding to display
+  let displayFinding: { priority: string; title: string; category: string } | null = null;
+  let isDiscovery = false;
+  if (finding) {
+    displayFinding = finding;
+  } else if (createdFindings && createdFindings.length > 0) {
+    displayFinding = createdFindings[0];
+    isDiscovery = true;
+  }
 
   const lines: string[] = [
     `# Cycle ${cycleNumber} Summary`,
@@ -1171,13 +1193,16 @@ export function buildCycleDoc(
     '',
     '## Finding',
     '',
-    `- **Priority**: ${finding?.priority ?? 'N/A'}`,
-    `- **Title**: ${finding?.title ?? 'N/A'}`,
-    `- **Category**: ${finding?.category ?? 'N/A'}`,
-    '',
-    '## Agent Results',
-    '',
+    `- **Priority**: ${displayFinding?.priority ?? 'N/A'}`,
+    `- **Title**: ${displayFinding?.title ?? 'N/A'}`,
+    `- **Category**: ${displayFinding?.category ?? 'N/A'}`,
   ];
+
+  if (isDiscovery) {
+    lines.push('- **Note**: Discovery (newly created finding)');
+  }
+
+  lines.push('', '## Agent Results', '');
 
   const agentNames = ['Product Designer', 'Developer', 'Reviewer', 'QA Engineer'];
   const runsByName = new Map(result.agentRuns.map(r => [r.agent_name, r]));

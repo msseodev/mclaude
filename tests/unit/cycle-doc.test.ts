@@ -303,4 +303,75 @@ describe('buildCycleDoc', () => {
     expect(doc).toContain('- Custom agent did custom things');
     expect(doc).not.toContain('D'.repeat(500));
   });
+
+  it('shows first created finding with Discovery note when no findingToFix but createdFindings exist', () => {
+    const result = makePipelineResult({
+      agentRuns: [makeAgentRun()],
+      totalCostUsd: 0,
+      totalDurationMs: 0,
+    });
+
+    const createdFindings = [
+      { priority: 'P1', title: 'New accessibility issue', category: 'accessibility' },
+      { priority: 'P2', title: 'Performance concern', category: 'performance' },
+    ];
+
+    const doc = buildCycleDoc(1, null, result, '2026-03-01T00:00:00.000Z', undefined, createdFindings);
+
+    expect(doc).toContain('## Finding');
+    expect(doc).toContain('- **Priority**: P1');
+    expect(doc).toContain('- **Title**: New accessibility issue');
+    expect(doc).toContain('- **Category**: accessibility');
+    expect(doc).toContain('Discovery');
+  });
+
+  it('prefers findingToFix over createdFindings when both are provided', () => {
+    const result = makePipelineResult({
+      agentRuns: [makeAgentRun()],
+      totalCostUsd: 0,
+      totalDurationMs: 0,
+    });
+
+    const finding = makeFinding({ priority: 'P0', title: 'Fix login button', category: 'bug' });
+    const createdFindings = [
+      { priority: 'P1', title: 'New issue', category: 'improvement' },
+    ];
+
+    const doc = buildCycleDoc(1, finding, result, '2026-03-01T00:00:00.000Z', undefined, createdFindings);
+
+    expect(doc).toContain('- **Priority**: P0');
+    expect(doc).toContain('- **Title**: Fix login button');
+    expect(doc).toContain('- **Category**: bug');
+    expect(doc).not.toContain('Discovery');
+  });
+
+  it('shows N/A when neither findingToFix nor createdFindings are provided', () => {
+    const result = makePipelineResult({
+      agentRuns: [makeAgentRun()],
+      totalCostUsd: 0,
+      totalDurationMs: 0,
+    });
+
+    const doc = buildCycleDoc(1, null, result, '2026-03-01T00:00:00.000Z', undefined, []);
+
+    expect(doc).toContain('## Finding');
+    expect(doc).toContain('- **Priority**: N/A');
+    expect(doc).toContain('- **Title**: N/A');
+    expect(doc).toContain('- **Category**: N/A');
+  });
+
+  it('parses QA results from JSON summary format', () => {
+    const result = makePipelineResult({
+      agentRuns: [makeAgentRun({ agent_name: 'QA Engineer', status: 'completed' })],
+      totalCostUsd: 0,
+      totalDurationMs: 0,
+      qaResult: { passed: true, testOutput: '{"summary": {"passed": 8, "failed": 0, "total": 8}}' },
+    });
+
+    const doc = buildCycleDoc(1, null, result, '2026-03-01T00:00:00.000Z');
+
+    expect(doc).toContain('- Passed: 8');
+    expect(doc).toContain('- Failed: 0');
+    expect(doc).toContain('- Total: 8');
+  });
 });

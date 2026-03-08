@@ -318,7 +318,7 @@ export class PipelineExecutor {
         },
       );
 
-      this.currentExecutor.execute(prompt, this.session.target_project);
+      this.currentExecutor.execute(prompt, this.session.target_project, agent.model);
     });
   }
 
@@ -589,14 +589,17 @@ export function parseReviewOutput(output: string): { approved: boolean; feedback
 }
 
 export function parseQAOutput(output: string): { passed: boolean; testOutput: string } {
-  try {
-    const jsonMatch = output.match(/\{[\s\S]*"summary"[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      const failed = parsed.summary?.failed ?? 0;
-      return { passed: failed === 0, testOutput: output };
-    }
-  } catch { /* fallback */ }
+  // Iterate over balanced {...} candidates to avoid greedy over-matching
+  const braceMatches = output.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g);
+  for (const m of braceMatches) {
+    try {
+      const parsed = JSON.parse(m[0]);
+      if (parsed.summary && typeof parsed.summary === 'object') {
+        const failed = parsed.summary.failed ?? 0;
+        return { passed: failed === 0, testOutput: output };
+      }
+    } catch { continue; }
+  }
   return { passed: true, testOutput: output };
 }
 

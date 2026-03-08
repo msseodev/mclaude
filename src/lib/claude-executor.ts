@@ -37,7 +37,7 @@ export class ClaudeExecutor {
     }
   }
 
-  execute(promptContent: string, workingDirectory: string): void {
+  execute(promptContent: string, workingDirectory: string, model?: string): void {
     this.killed = false;
     this.accumulatedOutput = '';
     this.accumulatedStderr = '';
@@ -59,6 +59,10 @@ export class ClaudeExecutor {
       '--max-turns', '50',
       '--dangerously-skip-permissions',
     ];
+
+    if (model) {
+      args.push('--model', model);
+    }
 
     // Build env without CLAUDECODE to prevent nesting
     const env = { ...process.env };

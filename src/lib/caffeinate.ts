@@ -33,7 +33,7 @@ export class CaffeinateManager {
     // Only run on macOS
     if (process.platform !== 'darwin') return;
     try {
-      this.process = spawn('caffeinate', ['-i'], {
+      this.process = spawn('caffeinate', ['-is'], {
         stdio: 'ignore',
         detached: false,
       });

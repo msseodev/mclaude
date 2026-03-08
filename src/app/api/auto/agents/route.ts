@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   initAutoTables();
   try {
     const body = await request.json();
-    const { name, display_name, role_description, system_prompt, pipeline_order } = body;
+    const { name, display_name, role_description, system_prompt, pipeline_order, model } = body;
     if (!name || !display_name || !system_prompt) {
       return NextResponse.json({ error: 'name, display_name, and system_prompt are required' }, { status: 400 });
     }
@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
       role_description: role_description || '',
       system_prompt,
       pipeline_order: pipeline_order ?? 99,
+      model: model || 'claude-opus-4-6',
     });
     return NextResponse.json(agent, { status: 201 });
   } catch (error) {

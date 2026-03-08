@@ -69,6 +69,7 @@ export interface AutoAgent {
   display_name: string;
   role_description: string;
   system_prompt: string;
+  model: string;
   pipeline_order: number;
   enabled: number;       // SQLite integer 0/1
   is_builtin: number;    // SQLite integer 0/1

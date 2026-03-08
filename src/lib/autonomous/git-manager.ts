@@ -43,30 +43,8 @@ export class GitManager {
     }
   }
 
-  async createCheckpoint(label: string): Promise<string | null> {
-    try {
-      // Stage all changes
-      await this.execGit(['add', '-A']);
-
-      // Check if there are staged changes
-      let hasChanges = false;
-      try {
-        await this.execGit(['diff', '--cached', '--quiet']);
-        // Exit code 0 means no changes
-        hasChanges = false;
-      } catch {
-        // Exit code 1 means there are changes
-        hasChanges = true;
-      }
-
-      if (hasChanges) {
-        await this.execGit(['commit', '-m', `[mclaude-auto] checkpoint: ${label}`]);
-      }
-
-      return await this.getCurrentSha();
-    } catch {
-      return null;
-    }
+  async createCheckpoint(): Promise<string | null> {
+    return this.getCurrentSha();
   }
 
   async commitCycleResult(message: string): Promise<string | null> {
