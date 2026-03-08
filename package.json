@@ -10,11 +10,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "discord": "tsx src/discord/bot.ts"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
     "better-sqlite3": "^12.6.2",
+    "discord.js": "^14.25.1",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
