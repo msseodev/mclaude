@@ -10,6 +10,7 @@ import {
   getSession,
   updateSession,
   createExecution,
+  getExecution,
   updateExecution,
   getSetting,
   getPlan,
@@ -359,11 +360,17 @@ class RunManagerImpl {
 
     // Update execution record
     if (this.currentExecutionId) {
+      // Calculate wall-clock duration from started_at
+      const execution = getExecution(this.currentExecutionId);
+      const wallClockMs = execution?.started_at
+        ? Date.now() - new Date(execution.started_at).getTime()
+        : result.duration_ms;
+
       updateExecution(this.currentExecutionId, {
         status: result.isError ? 'failed' : 'completed',
         output: result.output,
         cost_usd: result.cost_usd,
-        duration_ms: result.duration_ms,
+        duration_ms: wallClockMs,
         completed_at: now,
       });
     }
@@ -384,6 +391,8 @@ class RunManagerImpl {
     }
 
     const prompt = getPrompt(promptId);
+    // Re-fetch execution to get the updated wall-clock duration
+    const updatedExecution = this.currentExecutionId ? getExecution(this.currentExecutionId) : null;
 
     // Emit completion event
     this.emit({
@@ -393,7 +402,7 @@ class RunManagerImpl {
         promptTitle: prompt?.title ?? '',
         executionId: this.currentExecutionId,
         cost_usd: result.cost_usd,
-        duration_ms: result.duration_ms,
+        duration_ms: updatedExecution?.duration_ms ?? result.duration_ms,
         isError: result.isError,
       },
       timestamp: new Date().toISOString(),
