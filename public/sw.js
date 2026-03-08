@@ -1,11 +1,7 @@
 const CACHE_NAME = 'mclaude-v1';
-const PRECACHE_URLS = ['/', '/login'];
 
-// install: precache app shell
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
-  );
+// install: no precaching (auth-protected pages must not be cached)
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
@@ -21,23 +17,26 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// fetch: network-first for navigation and API, cache-first for static assets
+// fetch: cache-first for static assets only, network-only for everything else
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Never cache API requests
-  if (url.pathname.startsWith('/api/')) return;
+  // Never cache API requests or navigation (auth-protected pages)
+  if (url.pathname.startsWith('/api/') || event.request.mode === 'navigate') return;
 
   // Cache-first for static assets
   if (url.pathname.startsWith('/_next/static/')) {
     event.respondWith(
-      caches.match(event.request).then((cached) => cached || fetch(event.request))
+      caches.open(CACHE_NAME).then((cache) =>
+        cache.match(event.request).then((cached) => {
+          if (cached) return cached;
+          return fetch(event.request).then((response) => {
+            cache.put(event.request, response.clone());
+            return response;
+          });
+        })
+      )
     );
     return;
   }
-
-  // Network-first for everything else
-  event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
-  );
 });

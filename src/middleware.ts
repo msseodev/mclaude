@@ -28,7 +28,7 @@ export async function middleware(request: NextRequest) {
 
   // deny-page: redirect to login
   const loginUrl = new URL('/login', request.url);
-  loginUrl.searchParams.set('returnUrl', pathname);
+  loginUrl.searchParams.set('returnUrl', pathname + request.nextUrl.search);
   return NextResponse.redirect(loginUrl);
 }
 
