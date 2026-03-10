@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useRunStatus } from '@/hooks/useRunStatus';
 import { useAutoStatus } from '@/hooks/useAutoStatus';
+import { useChatStatus } from '@/hooks/useChatStatus';
 
-type Mode = 'manual' | 'auto';
+type Mode = 'manual' | 'auto' | 'chat';
 
 const MODE_KEY = 'mclaude-mode';
 
@@ -28,6 +29,12 @@ const autoNavItems = [
   { href: '/auto/settings', label: 'Settings', icon: GearIcon },
 ];
 
+const chatNavItems = [
+  { href: '/chat', label: 'Chat', icon: MessageSquareIcon },
+  { href: '/chat/sessions', label: 'Sessions', icon: ListIcon },
+  { href: '/chat/guide', label: 'Guide', icon: BookOpenIcon },
+];
+
 const manualStatusColors: Record<string, string> = {
   idle: 'bg-gray-400',
   running: 'bg-green-400',
@@ -46,6 +53,13 @@ const autoStatusColors: Record<string, string> = {
   stopped: 'bg-red-400',
 };
 
+const chatStatusColors: Record<string, string> = {
+  idle: 'bg-gray-400',
+  active: 'bg-green-400',
+  responding: 'bg-blue-400',
+  error: 'bg-red-400',
+};
+
 interface SidebarProps {
   open: boolean;
   onClose: () => void;
@@ -60,26 +74,43 @@ export function Sidebar({ open, onClose, authEnabled, onLogout }: SidebarProps) 
 
   useEffect(() => {
     const saved = localStorage.getItem(MODE_KEY);
-    if (saved === 'auto') {
-      setMode('auto');
+    if (saved === 'auto' || saved === 'chat') {
+      setMode(saved);
     }
   }, []);
 
-  // Always call both hooks (Rules of Hooks require consistent call order)
+  // Always call all hooks (Rules of Hooks require consistent call order)
   const { status: manualStatus } = useRunStatus();
   const { status: autoStatus } = useAutoStatus();
+  const { status: chatStatus } = useChatStatus();
 
   const handleModeChange = (newMode: Mode) => {
     setMode(newMode);
     localStorage.setItem(MODE_KEY, newMode);
-    router.push(newMode === 'manual' ? '/' : '/auto');
+    if (newMode === 'manual') {
+      router.push('/');
+    } else if (newMode === 'auto') {
+      router.push('/auto');
+    } else {
+      router.push('/chat');
+    }
   };
 
-  const navItems = mode === 'manual' ? manualNavItems : autoNavItems;
-  const statusColors = mode === 'manual' ? manualStatusColors : autoStatusColors;
+  const navItems = mode === 'manual'
+    ? manualNavItems
+    : mode === 'auto'
+      ? autoNavItems
+      : chatNavItems;
+  const statusColors = mode === 'manual'
+    ? manualStatusColors
+    : mode === 'auto'
+      ? autoStatusColors
+      : chatStatusColors;
   const sessionStatus = mode === 'manual'
     ? (manualStatus?.status ?? 'idle')
-    : (autoStatus?.status ?? 'idle');
+    : mode === 'auto'
+      ? (autoStatus?.status ?? 'idle')
+      : (chatStatus?.status ?? 'idle');
 
   return (
     <>
@@ -128,12 +159,22 @@ export function Sidebar({ open, onClose, authEnabled, onLogout }: SidebarProps) 
           >
             Auto
           </button>
+          <button
+            onClick={() => handleModeChange('chat')}
+            className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              mode === 'chat'
+                ? 'bg-gray-700 text-white'
+                : 'text-gray-400 hover:text-gray-300'
+            }`}
+          >
+            Chat
+          </button>
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-4">
           {navItems.map((item) => {
             const isActive =
-              item.href === '/' || item.href === '/auto'
+              item.href === '/' || item.href === '/auto' || item.href === '/chat'
                 ? pathname === item.href
                 : pathname.startsWith(item.href);
             return (
@@ -249,6 +290,22 @@ function UsersIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+    </svg>
+  );
+}
+
+function MessageSquareIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+    </svg>
+  );
+}
+
+function BookOpenIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
     </svg>
   );
 }

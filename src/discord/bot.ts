@@ -4,19 +4,25 @@ import { MclaudeApiClient } from './api-client';
 import { registerCommands, handleCommand } from './commands';
 import { handleButton } from './buttons';
 import { startSSEListeners, stopSSEListeners } from './notifications';
+import { setupChatHandler, stopChatHandler } from './chat-handler';
 
 async function main() {
   const config = loadConfig();
   const apiClient = new MclaudeApiClient(config.mclaudeBaseUrl, config.mclaudeApiKey);
 
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
   });
 
   client.once('ready', async () => {
     console.log(`Discord bot logged in as ${client.user!.tag}`);
     await registerCommands(client, config);
     startSSEListeners(client, config);
+    setupChatHandler(client, config, apiClient);
   });
 
   client.on('interactionCreate', async (interaction) => {
@@ -39,6 +45,7 @@ async function main() {
   const shutdown = () => {
     console.log('Shutting down Discord bot...');
     stopSSEListeners();
+    stopChatHandler();
     client.destroy();
     process.exit(0);
   };

@@ -11,6 +11,12 @@ export type {
   PlanItem,
   PlanItemRun,
   PlanWithItems,
+  ChatSessionStatus,
+  ChatSession,
+  ChatMessage,
+  ChatStatus,
+  ChatSSEEvent,
+  ChatSSEEventType,
 } from '@/lib/types';
 
 export type {

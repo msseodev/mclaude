@@ -4,6 +4,7 @@ import path from 'node:path';
 export interface DiscordBotConfig {
   discordBotToken: string;
   discordChannelId: string;
+  discordChatChannelId: string | null; // Channel for chat messages
   discordOwnerId: string;
   discordGuildId: string | null; // optional, for instant command registration
   mclaudeApiKey: string;
@@ -39,6 +40,7 @@ export function loadConfig(): DiscordBotConfig {
   return {
     discordBotToken,
     discordChannelId,
+    discordChatChannelId: process.env.DISCORD_CHAT_CHANNEL_ID || null,
     discordOwnerId,
     discordGuildId: process.env.DISCORD_GUILD_ID || null,
     mclaudeApiKey: process.env.MCLAUDE_API_KEY || '',

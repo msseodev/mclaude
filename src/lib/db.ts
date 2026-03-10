@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import type { Prompt, RunSession, Execution, Settings, Plan, PlanItem, PlanItemRun, PlanWithItems } from './types';
+import type { Prompt, RunSession, Execution, Settings, Plan, PlanItem, PlanItemRun, PlanWithItems, ChatSession, ChatMessage } from './types';
 
 const DB_PATH = path.join(process.cwd(), 'mclaude.db');
 
@@ -78,6 +78,29 @@ function initDb(): Database.Database {
       updated_at TEXT NOT NULL,
       FOREIGN KEY (run_session_id) REFERENCES run_sessions(id) ON DELETE CASCADE,
       FOREIGN KEY (plan_item_id) REFERENCES plan_items(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id TEXT PRIMARY KEY,
+      claude_session_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT 'New Chat',
+      working_directory TEXT NOT NULL,
+      model TEXT,
+      status TEXT NOT NULL DEFAULT 'idle',
+      total_cost_usd REAL NOT NULL DEFAULT 0,
+      message_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      cost_usd REAL,
+      duration_ms INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
 
@@ -504,4 +527,59 @@ export function updatePlanItemRun(id: string, data: { status: string }): PlanIte
      LEFT JOIN plan_items pi ON pir.plan_item_id = pi.id
      WHERE pir.id = ?`
   ).get(id) as PlanItemRun | undefined;
+}
+
+// ── Chat Functions ──
+
+export function createChatSession(id: string, claudeSessionId: string, workingDirectory: string, model?: string): void {
+  getDb().prepare(
+    'INSERT INTO chat_sessions (id, claude_session_id, working_directory, model) VALUES (?, ?, ?, ?)'
+  ).run(id, claudeSessionId, workingDirectory, model || null);
+}
+
+export function getChatSession(id: string): ChatSession | undefined {
+  return getDb().prepare('SELECT * FROM chat_sessions WHERE id = ?').get(id) as ChatSession | undefined;
+}
+
+export function getChatSessions(): ChatSession[] {
+  return getDb().prepare('SELECT * FROM chat_sessions ORDER BY updated_at DESC').all() as ChatSession[];
+}
+
+export function updateChatSession(id: string, updates: Partial<Pick<ChatSession, 'title' | 'status' | 'total_cost_usd' | 'message_count'>>): void {
+  const ALLOWED_FIELDS = new Set(['title', 'status', 'total_cost_usd', 'message_count']);
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (!ALLOWED_FIELDS.has(key)) continue;
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  fields.push("updated_at = datetime('now')");
+  values.push(id);
+  getDb().prepare(`UPDATE chat_sessions SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+}
+
+export function deleteChatSession(id: string): void {
+  getDb().prepare('DELETE FROM chat_sessions WHERE id = ?').run(id);
+}
+
+export function createChatMessage(id: string, sessionId: string, role: 'user' | 'assistant', content: string, costUsd?: number, durationMs?: number): void {
+  getDb().prepare(
+    'INSERT INTO chat_messages (id, session_id, role, content, cost_usd, duration_ms) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, sessionId, role, content, costUsd ?? null, durationMs ?? null);
+  // Update session message count and cost
+  const updateFields = ['message_count = message_count + 1', "updated_at = datetime('now')"];
+  const updateValues: unknown[] = [];
+  if (costUsd != null && costUsd > 0) {
+    updateFields.push('total_cost_usd = total_cost_usd + ?');
+    updateValues.push(costUsd);
+  }
+  updateValues.push(sessionId);
+  getDb().prepare(`UPDATE chat_sessions SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
+}
+
+export function getChatMessages(sessionId: string, limit = 100, offset = 0): ChatMessage[] {
+  return getDb().prepare(
+    'SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?'
+  ).all(sessionId, limit, offset) as ChatMessage[];
 }

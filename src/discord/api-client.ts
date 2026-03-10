@@ -1,6 +1,13 @@
 export class MclaudeApiClient {
   constructor(private baseUrl: string, private apiKey: string) {}
 
+  private async get(path: string) { return this.request('GET', path); }
+  private async post(path: string, body?: unknown) { return this.request('POST', path, body); }
+  private async delete(path: string) { return this.request('DELETE', path); }
+
+  getBaseUrl(): string { return this.baseUrl; }
+  getApiKey(): string { return this.apiKey; }
+
   private async request(method: string, path: string, body?: unknown) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) {
@@ -38,4 +45,21 @@ export class MclaudeApiClient {
 
   // History
   async getHistory(limit = 20) { return this.request('GET', `/api/history?limit=${limit}`); }
+
+  // Chat
+  async createChatSession(workingDirectory?: string): Promise<{ id: string; claude_session_id: string }> {
+    return this.post('/api/chat', { action: 'create', workingDirectory });
+  }
+  async sendChatMessage(message: string, sessionId: string): Promise<{ ok: boolean }> {
+    return this.post('/api/chat', { action: 'send', message, sessionId });
+  }
+  async switchChatSession(sessionId: string): Promise<unknown> {
+    return this.post('/api/chat', { action: 'switch', sessionId });
+  }
+  async getChatSessions(): Promise<Array<{ id: string; title: string; message_count: number; updated_at: string }>> {
+    return this.get('/api/chat/sessions');
+  }
+  async stopChatResponse(): Promise<{ ok: boolean }> {
+    return this.delete('/api/chat');
+  }
 }

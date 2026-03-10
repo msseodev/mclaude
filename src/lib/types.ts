@@ -165,3 +165,56 @@ export interface PlanItemRun {
 export interface PlanWithItems extends Plan {
   items: PlanItem[];
 }
+
+// ── Chat Mode Types ──
+
+export type ChatSessionStatus = 'idle' | 'active' | 'responding' | 'error';
+
+export interface ChatSession {
+  id: string;
+  claude_session_id: string; // Claude CLI session ID for --resume
+  title: string;
+  working_directory: string;
+  model: string | null;
+  status: ChatSessionStatus;
+  total_cost_usd: number;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  session_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  cost_usd: number | null;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+export interface ChatStatus {
+  sessionId: string | null;
+  claudeSessionId: string | null;
+  status: ChatSessionStatus;
+  title: string | null;
+  workingDirectory: string | null;
+  totalCostUsd: number;
+  messageCount: number;
+}
+
+export type ChatSSEEventType =
+  | 'text_delta'
+  | 'tool_start'
+  | 'tool_end'
+  | 'message_start'
+  | 'message_complete'
+  | 'message_failed'
+  | 'chat_status'
+  | 'error';
+
+export interface ChatSSEEvent {
+  type: ChatSSEEventType;
+  data: Record<string, unknown>;
+  timestamp: string;
+}

@@ -52,6 +52,12 @@ const commands = [
   new SlashCommandBuilder()
     .setName('auto-status')
     .setDescription('Show autonomous mode status'),
+  new SlashCommandBuilder()
+    .setName('chat-new')
+    .setDescription('Start a new chat session'),
+  new SlashCommandBuilder()
+    .setName('chat-sessions')
+    .setDescription('List recent chat sessions'),
 ];
 
 export async function registerCommands(
@@ -251,6 +257,25 @@ export async function handleCommand(
           )
           .setTimestamp();
         await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'chat-new': {
+        const session = await apiClient.createChatSession();
+        await interaction.editReply(`New chat session created: \`${session.id.slice(0, 8)}\``);
+        break;
+      }
+
+      case 'chat-sessions': {
+        const sessions = await apiClient.getChatSessions();
+        if (sessions.length === 0) {
+          await interaction.editReply('No chat sessions.');
+          break;
+        }
+        const list = sessions.slice(0, 10).map((s: { title: string; message_count: number; updated_at: string }, i: number) =>
+          `${i + 1}. **${s.title}** — ${s.message_count} msgs — ${new Date(s.updated_at).toLocaleDateString()}`,
+        ).join('\n');
+        await interaction.editReply(`**Chat Sessions:**\n${list}`);
         break;
       }
     }
