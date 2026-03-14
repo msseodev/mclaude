@@ -204,6 +204,9 @@ async function handleRunEvent(
         promptId: String(eventData.promptId || ''),
         promptTitle: String(eventData.promptTitle || 'Unknown'),
         executionId: String(eventData.executionId || ''),
+        planName: (eventData.planName as string) || null,
+        planCurrent: (eventData.planCurrent as number) || null,
+        planTotal: (eventData.planTotal as number) || null,
       });
       const row = buildRunActionRow();
       await channel.send({ embeds: [embed], components: [row] });
@@ -217,6 +220,9 @@ async function handleRunEvent(
         executionId: String(eventData.executionId || ''),
         cost_usd: eventData.cost_usd as number | null,
         duration_ms: eventData.duration_ms as number | null,
+        planName: (eventData.planName as string) || null,
+        planCurrent: (eventData.planCurrent as number) || null,
+        planTotal: (eventData.planTotal as number) || null,
       });
       await channel.send({ embeds: [embed] });
       break;
@@ -229,6 +235,9 @@ async function handleRunEvent(
         executionId: String(eventData.executionId || ''),
         cost_usd: eventData.cost_usd as number | null,
         duration_ms: eventData.duration_ms as number | null,
+        planName: (eventData.planName as string) || null,
+        planCurrent: (eventData.planCurrent as number) || null,
+        planTotal: (eventData.planTotal as number) || null,
       });
       const row = buildRunActionRow();
       await channel.send({ embeds: [embed], components: [row] });

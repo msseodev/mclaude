@@ -36,16 +36,29 @@ export function buildPromptStartEmbed(data: {
   promptId: string;
   promptTitle: string;
   executionId: string;
+  planName?: string | null;
+  planCurrent?: number | null;
+  planTotal?: number | null;
 }): EmbedBuilder {
-  return new EmbedBuilder()
+  const title = data.planCurrent && data.planTotal
+    ? `Prompt Started (${data.planCurrent} of ${data.planTotal})`
+    : 'Prompt Started';
+
+  const embed = new EmbedBuilder()
     .setColor(COLORS.running)
-    .setTitle('Prompt Started')
+    .setTitle(title)
     .setDescription(`**${data.promptTitle}**`)
     .addFields(
       { name: 'Prompt ID', value: data.promptId, inline: true },
       { name: 'Execution ID', value: data.executionId, inline: true },
     )
     .setTimestamp();
+
+  if (data.planName) {
+    embed.addFields({ name: 'Plan', value: data.planName, inline: true });
+  }
+
+  return embed;
 }
 
 export function buildPromptCompleteEmbed(data: {
@@ -54,16 +67,29 @@ export function buildPromptCompleteEmbed(data: {
   executionId: string;
   cost_usd: number | null;
   duration_ms: number | null;
+  planName?: string | null;
+  planCurrent?: number | null;
+  planTotal?: number | null;
 }): EmbedBuilder {
-  return new EmbedBuilder()
+  const title = data.planCurrent && data.planTotal
+    ? `Prompt Completed (${data.planCurrent} of ${data.planTotal})`
+    : 'Prompt Completed';
+
+  const embed = new EmbedBuilder()
     .setColor(COLORS.success)
-    .setTitle('Prompt Completed')
+    .setTitle(title)
     .setDescription(`**${data.promptTitle}**`)
     .addFields(
       { name: 'Duration', value: formatDuration(data.duration_ms), inline: true },
       { name: 'Cost', value: formatCost(data.cost_usd), inline: true },
     )
     .setTimestamp();
+
+  if (data.planName) {
+    embed.addFields({ name: 'Plan', value: data.planName, inline: true });
+  }
+
+  return embed;
 }
 
 export function buildPromptFailedEmbed(data: {
@@ -72,16 +98,29 @@ export function buildPromptFailedEmbed(data: {
   executionId: string;
   cost_usd: number | null;
   duration_ms: number | null;
+  planName?: string | null;
+  planCurrent?: number | null;
+  planTotal?: number | null;
 }): EmbedBuilder {
-  return new EmbedBuilder()
+  const title = data.planCurrent && data.planTotal
+    ? `Prompt Failed (${data.planCurrent} of ${data.planTotal})`
+    : 'Prompt Failed';
+
+  const embed = new EmbedBuilder()
     .setColor(COLORS.error)
-    .setTitle('Prompt Failed')
+    .setTitle(title)
     .setDescription(`**${data.promptTitle}**`)
     .addFields(
       { name: 'Duration', value: formatDuration(data.duration_ms), inline: true },
       { name: 'Cost', value: formatCost(data.cost_usd), inline: true },
     )
     .setTimestamp();
+
+  if (data.planName) {
+    embed.addFields({ name: 'Plan', value: data.planName, inline: true });
+  }
+
+  return embed;
 }
 
 export function buildRateLimitEmbed(data: {
