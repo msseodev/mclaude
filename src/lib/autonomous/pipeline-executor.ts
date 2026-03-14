@@ -13,6 +13,7 @@ import { StateManager } from './state-manager';
 import { buildAgentContext, StructuredAgentOutput } from './agent-context-builder';
 import { parseAgentOutput } from './output-parser';
 import { buildUserPrompt } from './user-prompt-builder';
+import { captureAppScreens } from './screen-capture';
 import type {
   AutoAgent,
   AutoSession,
@@ -66,6 +67,12 @@ export class PipelineExecutor {
     const stateManager = new StateManager(this.session.target_project);
     const stateContext = await stateManager.readState() || '';
 
+    // Capture screenshots for the product designer agent
+    const screenshotDir = settings.screenshot_dir || undefined;
+    const screenCapture = await captureAppScreens(this.session.target_project, {
+      screenshotDir,
+    });
+
     const previousOutputs = new Map<string, string>();
     const structuredOutputs: StructuredAgentOutput[] = [];
     const allAgentRuns: AutoAgentRun[] = [];
@@ -99,6 +106,9 @@ export class PipelineExecutor {
         structuredOutputs,
         finding: this.finding,
         gitDiff,
+        screenFrames: agent.name === 'product_designer' && screenCapture.frames.length > 0
+          ? screenCapture.frames
+          : undefined,
       });
 
       const result = await this.runSingleAgent(agent, context, 1);

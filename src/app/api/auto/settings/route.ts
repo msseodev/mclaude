@@ -29,6 +29,8 @@ export async function PUT(request: NextRequest) {
       'build_command', 'lint_command',
       // v4 settings: prompt evolution
       'evolution_enabled', 'evolution_interval', 'evolution_window',
+      // v5 settings: screen capture
+      'screenshot_dir',
     ];
 
     for (const key of settingKeys) {

@@ -138,6 +138,7 @@ export interface AutoSettings {
   evolution_enabled: boolean;    // default: false
   evolution_interval: number;    // default: 10
   evolution_window: number;      // default: 5
+  screenshot_dir: string;        // default: '' (auto-detect)
 }
 
 // --- SSE Event types ---

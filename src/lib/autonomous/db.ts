@@ -186,6 +186,8 @@ export function initAutoTables(): void {
   insertSetting.run('evolution_enabled', 'false');
   insertSetting.run('evolution_interval', '10');
   insertSetting.run('evolution_window', '5');
+  // v5 settings: screen capture
+  insertSetting.run('screenshot_dir', '');
 
   // Initialize evolution tables
   initEvolutionTables();
@@ -435,6 +437,8 @@ export function getAllAutoSettings(): AutoSettings {
     evolution_enabled: getAutoSetting('evolution_enabled') === 'true',
     evolution_interval: Number(getAutoSetting('evolution_interval') ?? '10'),
     evolution_window: Number(getAutoSetting('evolution_window') ?? '5'),
+    // v5 settings: screen capture
+    screenshot_dir: getAutoSetting('screenshot_dir') ?? '',
   };
 }
 

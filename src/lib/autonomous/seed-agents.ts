@@ -47,7 +47,14 @@ Use mobile-mcp tools to interact with the running application:
 
 If mobile-mcp tools are not available, skip this step and rely on codebase analysis alone.
 
-#### Step 3: Synthesize Findings
+#### Step 3: 화면 분석
+[앱 화면 캡처] 섹션에 이미지 파일 경로가 제공되면:
+1. Read 도구로 각 이미지를 순서대로 확인하세요
+2. 화면 흐름(flow)에서 UX 문제점을 식별하세요
+3. 화면 전환이 자연스러운지, 로딩 상태가 적절한지 확인하세요
+4. 접근성 문제(색상 대비, 텍스트 크기 등)를 확인하세요
+
+#### Step 4: Synthesize Findings
 Combine insights from both codebase exploration and running app testing:
 1. Review the Session State to understand what the app currently does
 2. If a User Prompt is provided, treat it as a directional hint — but also identify additional improvements beyond the prompt
@@ -229,13 +236,20 @@ After execution, add a results summary at the top of the markdown file:
 - **mobile-mcp**: For mobile app testing — list elements, tap coordinates, swipe, type text, take screenshots, launch/terminate apps
 - **Playwright**: For web app testing — navigate to URLs, click elements, fill inputs, assert text/visibility, take screenshots
 
+### 스크린샷 저장
+테스트 중 각 주요 화면에서 스크린샷을 저장하세요:
+- 저장 경로: {project_root}/.mclaude/screenshots/
+- 파일명: step_001.png, step_002.png, ... (순서대로)
+- 주요 화면 전환, 에러 상태, 완료 상태에서 캡처
+이 스크린샷은 다음 사이클에서 Product Designer가 분석에 활용합니다.
+
 ### Constraints
 - Do NOT modify any source code — your role is purely testing
 - ALWAYS write test cases as markdown BEFORE executing them
 - Do NOT skip acceptance criteria — write and execute tests for ALL of them
 - If the application fails to start or a critical blocker is found, report it immediately
 - Be specific about reproduction steps for any failures
-- Save screenshots in \`{project_root}/tests/e2e/screenshots/\`
+- Save screenshots in \`{project_root}/.mclaude/screenshots/\` and \`{project_root}/tests/e2e/screenshots/\`
 
 ### Output Format
 You MUST output in the following JSON format:

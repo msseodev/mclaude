@@ -16,6 +16,7 @@ export interface AgentContext {
   reviewFeedback?: string;
   designerFeedback?: string;
   gitDiff?: string;
+  screenFrames?: string[];  // Array of image file paths for visual analysis
 }
 
 export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
@@ -87,6 +88,16 @@ export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
   // 7. Git diff (for Reviewer)
   if (ctx.gitDiff) {
     parts.push(`\n[Code Changes (git diff)]\n${ctx.gitDiff}`);
+  }
+
+  // 8. Screen frames (for Product Designer)
+  if (ctx.screenFrames && ctx.screenFrames.length > 0) {
+    const frameList = ctx.screenFrames
+      .map((f, i) => `${i + 1}. ${f}`)
+      .join('\n');
+    parts.push(
+      `\n[앱 화면 캡처]\n다음 이미지 파일들은 앱의 현재 상태를 순서대로 캡처한 것입니다.\n각 이미지를 Read 도구로 확인하여 UI/UX를 분석하세요:\n${frameList}`,
+    );
   }
 
   return parts.join('\n\n');

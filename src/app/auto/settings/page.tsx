@@ -27,6 +27,7 @@ export default function AutoSettingsPage() {
     evolution_enabled: false,
     evolution_interval: 10,
     evolution_window: 5,
+    screenshot_dir: '',
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -166,6 +167,25 @@ export default function AutoSettingsPage() {
             />
             <p className="mt-1 text-xs text-gray-500">
               비어있으면 건너뜁니다
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="auto-screenshot-dir" className="mb-1 block text-sm font-medium text-gray-700">
+              스크린샷 경로
+            </label>
+            <input
+              id="auto-screenshot-dir"
+              type="text"
+              value={form.screenshot_dir}
+              onChange={(e) =>
+                setForm({ ...form, screenshot_dir: e.target.value })
+              }
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="비워두면 자동 감지 (.mclaude/screenshots/)"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              비어있으면 자동 감지합니다
             </p>
           </div>
 
