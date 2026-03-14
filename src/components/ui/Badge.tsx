@@ -1,6 +1,6 @@
 'use client';
 
-type BadgeVariant = 'gray' | 'blue' | 'green' | 'yellow' | 'red' | 'purple';
+export type BadgeVariant = 'gray' | 'blue' | 'green' | 'yellow' | 'red' | 'purple';
 
 interface BadgeProps {
   variant?: BadgeVariant;
