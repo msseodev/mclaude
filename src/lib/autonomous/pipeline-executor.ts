@@ -78,10 +78,10 @@ export class PipelineExecutor {
     const settings = getAllAutoSettings();
     const enabledAgents = getAutoAgents(true);
 
-    // Skip planners/designer for fix cycles if configured
-    const plannerNames = new Set(['product_designer', 'ux_planner', 'tech_planner', 'biz_planner', 'planning_moderator']);
+    // Skip planners (not moderator) for fix cycles if configured
+    const skipPlannerNames = new Set(['product_designer', 'ux_planner', 'tech_planner', 'biz_planner']);
     const agents = (this.finding && settings.skip_designer_for_fixes)
-      ? enabledAgents.filter(a => !plannerNames.has(a.name))
+      ? enabledAgents.filter(a => !skipPlannerNames.has(a.name))
       : enabledAgents;
 
     const userPrompts = getAutoUserPrompts(this.session.id);
