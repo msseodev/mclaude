@@ -174,7 +174,7 @@ export function Sidebar({ open, onClose, authEnabled, onLogout }: SidebarProps) 
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 px-3 py-4">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
           {navItems.map((item) => {
             const isActive =
               item.href === '/' || item.href === '/auto' || item.href === '/chat'
