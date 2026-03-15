@@ -360,7 +360,7 @@ export default function AutoSettingsPage() {
               className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
             />
             <label htmlFor="auto-skip-designer" className="text-sm font-medium text-gray-700">
-              Skip Product Designer for fix cycles
+              Skip planning agents for fix cycles
             </label>
           </div>
 

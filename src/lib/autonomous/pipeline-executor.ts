@@ -7,11 +7,13 @@ import {
   getAllAutoSettings,
   getAutoUserPrompts,
   getAutoCycle,
+  getCEORequests,
+  createCEORequest,
 } from './db';
 import { GitManager } from './git-manager';
 import { StateManager } from './state-manager';
 import { buildAgentContext, StructuredAgentOutput } from './agent-context-builder';
-import { parseAgentOutput } from './output-parser';
+import { parseAgentOutput, parseCEORequests } from './output-parser';
 import { buildUserPrompt } from './user-prompt-builder';
 import { captureAppScreens } from './screen-capture';
 import type {
@@ -40,6 +42,26 @@ interface SingleAgentResult {
   rateLimitInfo?: RateLimitInfo;
 }
 
+interface ExecutionStep {
+  parallel: boolean;
+  agents: AutoAgent[];
+  order: number;
+  groupName?: string;
+}
+
+interface FeedbackLoopResult {
+  additionalRuns: AutoAgentRun[];
+  additionalCost: number;
+  additionalDuration: number;
+  latestDeveloperOutput?: string;
+  additionalStructuredOutputs: StructuredAgentOutput[];
+  abortedByRateLimit?: boolean;
+  rateLimitInfo?: RateLimitInfo;
+}
+
+// Names of planning agents that should receive screen frames
+const PLANNER_AGENT_NAMES = new Set(['product_designer', 'ux_planner']);
+
 export class PipelineExecutor {
   private currentExecutor: ClaudeExecutor | null = null;
   private aborted = false;
@@ -56,9 +78,10 @@ export class PipelineExecutor {
     const settings = getAllAutoSettings();
     const enabledAgents = getAutoAgents(true);
 
-    // Skip designer for fix cycles if configured
+    // Skip planners/designer for fix cycles if configured
+    const plannerNames = new Set(['product_designer', 'ux_planner', 'tech_planner', 'biz_planner', 'planning_moderator']);
     const agents = (this.finding && settings.skip_designer_for_fixes)
-      ? enabledAgents.filter(a => a.name !== 'product_designer')
+      ? enabledAgents.filter(a => !plannerNames.has(a.name))
       : enabledAgents;
 
     const userPrompts = getAutoUserPrompts(this.session.id);
@@ -67,7 +90,7 @@ export class PipelineExecutor {
     const stateManager = new StateManager(this.session.target_project);
     const stateContext = await stateManager.readState() || '';
 
-    // Capture screenshots for the product designer agent
+    // Capture screenshots for planner agents
     const screenshotDir = settings.screenshot_dir || undefined;
     const screenCapture = await captureAppScreens(this.session.target_project, {
       screenshotDir,
@@ -79,150 +102,317 @@ export class PipelineExecutor {
     let totalCostUsd = 0;
     let totalDurationMs = 0;
 
-    for (const agent of agents) {
+    // Fetch existing CEO requests for context
+    const ceoRequests = getCEORequests(this.session.id);
+
+    // Build execution plan with parallel group support
+    const executionSteps = this.buildExecutionPlan(agents);
+
+    for (const step of executionSteps) {
       if (this.aborted) break;
 
-      // Emit agent_start
-      this.emit({
-        type: 'agent_start',
-        data: { agentId: agent.id, agentName: agent.display_name, cycleId: this.cycleId },
-        timestamp: new Date().toISOString(),
-      });
+      if (step.parallel) {
+        // Emit parallel_group_start
+        this.emit({
+          type: 'parallel_group_start',
+          data: {
+            groupName: step.groupName ?? 'unknown',
+            agentIds: step.agents.map(a => a.id),
+          },
+          timestamp: new Date().toISOString(),
+        });
 
-      // Build git diff for reviewer
-      let gitDiff: string | undefined;
-      if (agent.name === 'reviewer') {
-        const gitManager = new GitManager(this.session.target_project);
-        const cycle = getAutoCycle(this.cycleId);
-        if (cycle?.git_checkpoint) {
-          gitDiff = await gitManager.getDiff(cycle.git_checkpoint);
+        // Run all agents in this group in parallel
+        const parallelResults = await Promise.all(
+          step.agents.map(agent => {
+            // Emit agent_start for each parallel agent
+            this.emit({
+              type: 'agent_start',
+              data: { agentId: agent.id, agentName: agent.display_name, cycleId: this.cycleId },
+              timestamp: new Date().toISOString(),
+            });
+
+            const context = buildAgentContext(agent, {
+              userPrompt: userPromptText,
+              sessionState: stateContext,
+              previousOutputs,
+              structuredOutputs,
+              finding: this.finding,
+              screenFrames: PLANNER_AGENT_NAMES.has(agent.name) && screenCapture.frames.length > 0
+                ? screenCapture.frames
+                : undefined,
+              ceoRequests,
+            });
+
+            return this.runSingleAgent(agent, context, 1);
+          })
+        );
+
+        // Check for rate limits in any parallel result
+        for (const result of parallelResults) {
+          if (result.rateLimited) {
+            return {
+              success: false,
+              agentRuns: allAgentRuns,
+              finalOutput: '',
+              totalCostUsd,
+              totalDurationMs,
+              abortedByRateLimit: true,
+              rateLimitInfo: result.rateLimitInfo,
+            };
+          }
         }
-      }
 
-      const context = buildAgentContext(agent, {
-        userPrompt: userPromptText,
-        sessionState: stateContext,
-        previousOutputs,
-        structuredOutputs,
-        finding: this.finding,
-        gitDiff,
-        screenFrames: agent.name === 'product_designer' && screenCapture.frames.length > 0
-          ? screenCapture.frames
-          : undefined,
-      });
+        // Collect all outputs from parallel agents
+        for (let i = 0; i < step.agents.length; i++) {
+          const agent = step.agents[i];
+          const result = parallelResults[i];
 
-      const result = await this.runSingleAgent(agent, context, 1);
+          allAgentRuns.push(result.agentRun);
+          totalCostUsd += result.agentRun.cost_usd ?? 0;
+          totalDurationMs += result.agentRun.duration_ms ?? 0;
+          previousOutputs.set(agent.display_name, result.agentRun.output);
 
-      if (result.rateLimited) {
-        return {
-          success: false,
-          agentRuns: allAgentRuns,
-          finalOutput: '',
-          totalCostUsd,
-          totalDurationMs,
-          abortedByRateLimit: true,
-          rateLimitInfo: result.rateLimitInfo,
-        };
-      }
+          // Parse and store structured output
+          const parsed = parseAgentOutput(agent.display_name, result.agentRun.output);
+          structuredOutputs.push({
+            agentName: agent.display_name,
+            summary: parsed.summary,
+            fullOutputId: result.agentRun.id,
+            structuredData: parsed.structuredData,
+          });
 
-      allAgentRuns.push(result.agentRun);
-      totalCostUsd += result.agentRun.cost_usd ?? 0;
-      totalDurationMs += result.agentRun.duration_ms ?? 0;
-      previousOutputs.set(agent.display_name, result.agentRun.output);
+          // Extract CEO requests from agent output
+          const agentCEORequests = parseCEORequests(result.agentRun.output);
+          for (const req of agentCEORequests) {
+            const created = createCEORequest({
+              session_id: this.session.id,
+              cycle_id: this.cycleId,
+              from_agent: agent.display_name,
+              type: req.type,
+              title: req.title,
+              description: req.description,
+              blocking: req.blocking,
+            });
+            this.emit({
+              type: 'ceo_request_created',
+              data: { request: created },
+              timestamp: new Date().toISOString(),
+            });
+          }
 
-      // Parse and store structured output
-      const parsed = parseAgentOutput(agent.display_name, result.agentRun.output);
-      structuredOutputs.push({
-        agentName: agent.display_name,
-        summary: parsed.summary,
-        fullOutputId: result.agentRun.id,
-        structuredData: parsed.structuredData,
-      });
+          // Emit agent_complete or agent_failed
+          this.emit({
+            type: result.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
+            data: {
+              agentId: agent.id,
+              agentName: agent.display_name,
+              status: result.agentRun.status,
+              costUsd: result.agentRun.cost_usd,
+              durationMs: result.agentRun.duration_ms,
+            },
+            timestamp: new Date().toISOString(),
+          });
+        }
 
-      // Emit agent_complete or agent_failed
-      this.emit({
-        type: result.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
-        data: {
-          agentId: agent.id,
+        // Emit parallel_group_complete
+        this.emit({
+          type: 'parallel_group_complete',
+          data: { groupName: step.groupName ?? 'unknown' },
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        // Single agent execution (existing serial logic)
+        const agent = step.agents[0];
+
+        // Emit planning_review_start for the moderator
+        if (agent.name === 'planning_moderator') {
+          this.emit({
+            type: 'planning_review_start',
+            data: { agentId: agent.id, agentName: agent.display_name },
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // Emit agent_start
+        this.emit({
+          type: 'agent_start',
+          data: { agentId: agent.id, agentName: agent.display_name, cycleId: this.cycleId },
+          timestamp: new Date().toISOString(),
+        });
+
+        // Build git diff for reviewer
+        let gitDiff: string | undefined;
+        if (agent.name === 'reviewer') {
+          const gitManager = new GitManager(this.session.target_project);
+          const cycle = getAutoCycle(this.cycleId);
+          if (cycle?.git_checkpoint) {
+            gitDiff = await gitManager.getDiff(cycle.git_checkpoint);
+          }
+        }
+
+        const context = buildAgentContext(agent, {
+          userPrompt: userPromptText,
+          sessionState: stateContext,
+          previousOutputs,
+          structuredOutputs,
+          finding: this.finding,
+          gitDiff,
+          screenFrames: PLANNER_AGENT_NAMES.has(agent.name) && screenCapture.frames.length > 0
+            ? screenCapture.frames
+            : undefined,
+          ceoRequests,
+        });
+
+        const result = await this.runSingleAgent(agent, context, 1);
+
+        if (result.rateLimited) {
+          return {
+            success: false,
+            agentRuns: allAgentRuns,
+            finalOutput: '',
+            totalCostUsd,
+            totalDurationMs,
+            abortedByRateLimit: true,
+            rateLimitInfo: result.rateLimitInfo,
+          };
+        }
+
+        allAgentRuns.push(result.agentRun);
+        totalCostUsd += result.agentRun.cost_usd ?? 0;
+        totalDurationMs += result.agentRun.duration_ms ?? 0;
+        previousOutputs.set(agent.display_name, result.agentRun.output);
+
+        // Parse and store structured output
+        const parsed = parseAgentOutput(agent.display_name, result.agentRun.output);
+        structuredOutputs.push({
           agentName: agent.display_name,
-          status: result.agentRun.status,
-          costUsd: result.agentRun.cost_usd,
-          durationMs: result.agentRun.duration_ms,
-        },
-        timestamp: new Date().toISOString(),
-      });
+          summary: parsed.summary,
+          fullOutputId: result.agentRun.id,
+          structuredData: parsed.structuredData,
+        });
 
-      // Developer -> Designer feedback loop
-      if (agent.name === 'developer' && result.agentRun.status === 'completed') {
-        const devParsed = parseDeveloperOutput(result.agentRun.output);
-        if (devParsed.blocked) {
-          const loopResult = await this.designerDeveloperLoop(
-            agents,
-            settings.max_designer_iterations,
-            userPromptText,
-            stateContext,
-            structuredOutputs,
-            previousOutputs,
-            devParsed.blockerReason,
-          );
+        // Extract CEO requests from agent output
+        const serialCEORequests = parseCEORequests(result.agentRun.output);
+        for (const req of serialCEORequests) {
+          const created = createCEORequest({
+            session_id: this.session.id,
+            cycle_id: this.cycleId,
+            from_agent: agent.display_name,
+            type: req.type,
+            title: req.title,
+            description: req.description,
+            blocking: req.blocking,
+          });
+          this.emit({
+            type: 'ceo_request_created',
+            data: { request: created },
+            timestamp: new Date().toISOString(),
+          });
+        }
 
-          allAgentRuns.push(...loopResult.additionalRuns);
-          totalCostUsd += loopResult.additionalCost;
-          totalDurationMs += loopResult.additionalDuration;
+        // Emit agent_complete or agent_failed
+        this.emit({
+          type: result.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
+          data: {
+            agentId: agent.id,
+            agentName: agent.display_name,
+            status: result.agentRun.status,
+            costUsd: result.agentRun.cost_usd,
+            durationMs: result.agentRun.duration_ms,
+          },
+          timestamp: new Date().toISOString(),
+        });
 
-          if (loopResult.latestDeveloperOutput) {
-            previousOutputs.set('Developer', loopResult.latestDeveloperOutput);
-          }
+        // Developer -> feedback loop (Planning Moderator or Product Designer)
+        if (agent.name === 'developer' && result.agentRun.status === 'completed') {
+          const devParsed = parseDeveloperOutput(result.agentRun.output);
+          if (devParsed.blocked) {
+            // Find the moderator first, fall back to designer
+            const feedbackTarget = agents.find(a => a.name === 'planning_moderator')
+              || agents.find(a => a.name === 'product_designer');
 
-          // Merge updated structured outputs
-          structuredOutputs.push(...loopResult.additionalStructuredOutputs);
+            if (feedbackTarget) {
+              // Emit planning_dev_review SSE event
+              this.emit({
+                type: 'planning_dev_review',
+                data: {
+                  feedbackTarget: feedbackTarget.display_name,
+                  blockerReason: devParsed.blockerReason,
+                },
+                timestamp: new Date().toISOString(),
+              });
 
-          if (loopResult.abortedByRateLimit) {
-            return {
-              success: false,
-              agentRuns: allAgentRuns,
-              finalOutput: '',
-              totalCostUsd,
-              totalDurationMs,
-              abortedByRateLimit: true,
-              rateLimitInfo: loopResult.rateLimitInfo,
-            };
+              const loopResult = await this.feedbackLoop(
+                feedbackTarget,
+                agents.find(a => a.name === 'developer')!,
+                settings.max_designer_iterations,
+                userPromptText,
+                stateContext,
+                structuredOutputs,
+                previousOutputs,
+                devParsed.blockerReason,
+              );
+
+              allAgentRuns.push(...loopResult.additionalRuns);
+              totalCostUsd += loopResult.additionalCost;
+              totalDurationMs += loopResult.additionalDuration;
+
+              if (loopResult.latestDeveloperOutput) {
+                previousOutputs.set('Developer', loopResult.latestDeveloperOutput);
+              }
+
+              // Merge updated structured outputs
+              structuredOutputs.push(...loopResult.additionalStructuredOutputs);
+
+              if (loopResult.abortedByRateLimit) {
+                return {
+                  success: false,
+                  agentRuns: allAgentRuns,
+                  finalOutput: '',
+                  totalCostUsd,
+                  totalDurationMs,
+                  abortedByRateLimit: true,
+                  rateLimitInfo: loopResult.rateLimitInfo,
+                };
+              }
+            }
           }
         }
-      }
 
-      // Reviewer <-> Developer loop
-      if (agent.name === 'reviewer' && result.agentRun.status === 'completed') {
-        const reviewResult = parseReviewOutput(result.agentRun.output);
-        if (!reviewResult.approved) {
-          const loopResult = await this.reviewerDeveloperLoop(
-            agents,
-            settings.review_max_iterations,
-            userPromptText,
-            stateContext,
-            previousOutputs,
-            reviewResult.feedback,
-            structuredOutputs,
-          );
+        // Reviewer <-> Developer loop
+        if (agent.name === 'reviewer' && result.agentRun.status === 'completed') {
+          const reviewResult = parseReviewOutput(result.agentRun.output);
+          if (!reviewResult.approved) {
+            const loopResult = await this.reviewerDeveloperLoop(
+              agents,
+              settings.review_max_iterations,
+              userPromptText,
+              stateContext,
+              previousOutputs,
+              reviewResult.feedback,
+              structuredOutputs,
+            );
 
-          allAgentRuns.push(...loopResult.additionalRuns);
-          totalCostUsd += loopResult.additionalCost;
-          totalDurationMs += loopResult.additionalDuration;
+            allAgentRuns.push(...loopResult.additionalRuns);
+            totalCostUsd += loopResult.additionalCost;
+            totalDurationMs += loopResult.additionalDuration;
 
-          if (loopResult.latestDeveloperOutput) {
-            previousOutputs.set('Developer', loopResult.latestDeveloperOutput);
-          }
+            if (loopResult.latestDeveloperOutput) {
+              previousOutputs.set('Developer', loopResult.latestDeveloperOutput);
+            }
 
-          if (loopResult.abortedByRateLimit) {
-            return {
-              success: false,
-              agentRuns: allAgentRuns,
-              finalOutput: '',
-              totalCostUsd,
-              totalDurationMs,
-              abortedByRateLimit: true,
-              rateLimitInfo: loopResult.rateLimitInfo,
-            };
+            if (loopResult.abortedByRateLimit) {
+              return {
+                success: false,
+                agentRuns: allAgentRuns,
+                finalOutput: '',
+                totalCostUsd,
+                totalDurationMs,
+                abortedByRateLimit: true,
+                rateLimitInfo: loopResult.rateLimitInfo,
+              };
+            }
           }
         }
       }
@@ -247,6 +437,40 @@ export class PipelineExecutor {
       totalDurationMs,
       qaResult,
     };
+  }
+
+  /**
+   * Build an execution plan that groups parallel agents together.
+   * Agents with the same non-null parallel_group run in parallel.
+   * Agents with null parallel_group run serially.
+   */
+  private buildExecutionPlan(agents: AutoAgent[]): ExecutionStep[] {
+    const steps: ExecutionStep[] = [];
+    const groups = new Map<string, AutoAgent[]>();
+
+    // Sort by pipeline_order
+    const sorted = [...agents].sort((a, b) => a.pipeline_order - b.pipeline_order);
+
+    for (const agent of sorted) {
+      if (agent.parallel_group) {
+        if (!groups.has(agent.parallel_group)) {
+          groups.set(agent.parallel_group, []);
+        }
+        groups.get(agent.parallel_group)!.push(agent);
+      } else {
+        steps.push({ parallel: false, agents: [agent], order: agent.pipeline_order });
+      }
+    }
+
+    // Insert parallel groups at their minimum pipeline_order position
+    for (const [groupName, groupAgents] of groups) {
+      const minOrder = Math.min(...groupAgents.map(a => a.pipeline_order));
+      steps.push({ parallel: true, agents: groupAgents, order: minOrder, groupName });
+    }
+
+    // Sort all steps by order
+    steps.sort((a, b) => a.order - b.order);
+    return steps;
   }
 
   private async runSingleAgent(
@@ -444,29 +668,20 @@ export class PipelineExecutor {
     return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, latestDeveloperOutput: latestDevOutput };
   }
 
-  private async designerDeveloperLoop(
-    agents: AutoAgent[],
+  /**
+   * Generic feedback loop between a "feedback agent" (Planning Moderator or Product Designer)
+   * and the Developer. This replaces the old designerDeveloperLoop with a more generic approach.
+   */
+  private async feedbackLoop(
+    feedbackAgent: AutoAgent,
+    implementer: AutoAgent,
     maxIterations: number,
     userPrompt: string,
     stateContext: string,
     structuredOutputs: StructuredAgentOutput[],
     previousOutputs: Map<string, string>,
     blockerReason: string,
-  ): Promise<{
-    additionalRuns: AutoAgentRun[];
-    additionalCost: number;
-    additionalDuration: number;
-    latestDeveloperOutput?: string;
-    additionalStructuredOutputs: StructuredAgentOutput[];
-    abortedByRateLimit?: boolean;
-    rateLimitInfo?: RateLimitInfo;
-  }> {
-    const designer = agents.find(a => a.name === 'product_designer');
-    const developer = agents.find(a => a.name === 'developer');
-    if (!designer || !developer) {
-      return { additionalRuns: [], additionalCost: 0, additionalDuration: 0, additionalStructuredOutputs: [] };
-    }
-
+  ): Promise<FeedbackLoopResult> {
     const runs: AutoAgentRun[] = [];
     const newStructuredOutputs: StructuredAgentOutput[] = [];
     let totalCost = 0;
@@ -477,15 +692,15 @@ export class PipelineExecutor {
     for (let i = 0; i < maxIterations; i++) {
       if (this.aborted) break;
 
-      // Emit designer_iteration
+      // Emit designer_iteration (reuse same event type for backward compatibility)
       this.emit({
         type: 'designer_iteration',
-        data: { iteration: i + 1, maxIterations, feedback },
+        data: { iteration: i + 1, maxIterations, feedback, feedbackAgent: feedbackAgent.display_name },
         timestamp: new Date().toISOString(),
       });
 
-      // Re-run Designer with feedback
-      const designerContext = buildAgentContext(designer, {
+      // Re-run feedback agent (Moderator or Designer) with developer feedback
+      const feedbackContext = buildAgentContext(feedbackAgent, {
         userPrompt,
         sessionState: stateContext,
         previousOutputs,
@@ -496,35 +711,35 @@ export class PipelineExecutor {
 
       this.emit({
         type: 'agent_start',
-        data: { agentId: designer.id, agentName: designer.display_name, cycleId: this.cycleId },
+        data: { agentId: feedbackAgent.id, agentName: feedbackAgent.display_name, cycleId: this.cycleId },
         timestamp: new Date().toISOString(),
       });
 
-      const designerResult = await this.runSingleAgent(designer, designerContext, i + 2);
-      if (designerResult.rateLimited) {
-        return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByRateLimit: true, rateLimitInfo: designerResult.rateLimitInfo };
+      const feedbackResult = await this.runSingleAgent(feedbackAgent, feedbackContext, i + 2);
+      if (feedbackResult.rateLimited) {
+        return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByRateLimit: true, rateLimitInfo: feedbackResult.rateLimitInfo };
       }
-      runs.push(designerResult.agentRun);
-      totalCost += designerResult.agentRun.cost_usd ?? 0;
-      totalDuration += designerResult.agentRun.duration_ms ?? 0;
-      previousOutputs.set(designer.display_name, designerResult.agentRun.output);
+      runs.push(feedbackResult.agentRun);
+      totalCost += feedbackResult.agentRun.cost_usd ?? 0;
+      totalDuration += feedbackResult.agentRun.duration_ms ?? 0;
+      previousOutputs.set(feedbackAgent.display_name, feedbackResult.agentRun.output);
 
-      const designerParsed = parseAgentOutput(designer.display_name, designerResult.agentRun.output);
+      const feedbackParsed = parseAgentOutput(feedbackAgent.display_name, feedbackResult.agentRun.output);
       newStructuredOutputs.push({
-        agentName: designer.display_name,
-        summary: designerParsed.summary,
-        fullOutputId: designerResult.agentRun.id,
-        structuredData: designerParsed.structuredData,
+        agentName: feedbackAgent.display_name,
+        summary: feedbackParsed.summary,
+        fullOutputId: feedbackResult.agentRun.id,
+        structuredData: feedbackParsed.structuredData,
       });
 
       this.emit({
-        type: designerResult.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
-        data: { agentId: designer.id, agentName: designer.display_name, status: designerResult.agentRun.status },
+        type: feedbackResult.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
+        data: { agentId: feedbackAgent.id, agentName: feedbackAgent.display_name, status: feedbackResult.agentRun.status },
         timestamp: new Date().toISOString(),
       });
 
       // Re-run Developer with revised spec
-      const devContext = buildAgentContext(developer, {
+      const devContext = buildAgentContext(implementer, {
         userPrompt,
         sessionState: stateContext,
         previousOutputs,
@@ -534,11 +749,11 @@ export class PipelineExecutor {
 
       this.emit({
         type: 'agent_start',
-        data: { agentId: developer.id, agentName: developer.display_name, cycleId: this.cycleId },
+        data: { agentId: implementer.id, agentName: implementer.display_name, cycleId: this.cycleId },
         timestamp: new Date().toISOString(),
       });
 
-      const devResult = await this.runSingleAgent(developer, devContext, i + 2);
+      const devResult = await this.runSingleAgent(implementer, devContext, i + 2);
       if (devResult.rateLimited) {
         return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByRateLimit: true, rateLimitInfo: devResult.rateLimitInfo };
       }
@@ -546,11 +761,11 @@ export class PipelineExecutor {
       totalCost += devResult.agentRun.cost_usd ?? 0;
       totalDuration += devResult.agentRun.duration_ms ?? 0;
       latestDevOutput = devResult.agentRun.output;
-      previousOutputs.set(developer.display_name, devResult.agentRun.output);
+      previousOutputs.set(implementer.display_name, devResult.agentRun.output);
 
-      const devParsedOutput = parseAgentOutput(developer.display_name, devResult.agentRun.output);
+      const devParsedOutput = parseAgentOutput(implementer.display_name, devResult.agentRun.output);
       newStructuredOutputs.push({
-        agentName: developer.display_name,
+        agentName: implementer.display_name,
         summary: devParsedOutput.summary,
         fullOutputId: devResult.agentRun.id,
         structuredData: devParsedOutput.structuredData,
@@ -558,7 +773,7 @@ export class PipelineExecutor {
 
       this.emit({
         type: devResult.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
-        data: { agentId: developer.id, agentName: developer.display_name, status: devResult.agentRun.status },
+        data: { agentId: implementer.id, agentName: implementer.display_name, status: devResult.agentRun.status },
         timestamp: new Date().toISOString(),
       });
 
@@ -570,6 +785,36 @@ export class PipelineExecutor {
     }
 
     return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, latestDeveloperOutput: latestDevOutput, additionalStructuredOutputs: newStructuredOutputs };
+  }
+
+  /**
+   * Legacy method for backward compatibility. Delegates to feedbackLoop.
+   */
+  private async designerDeveloperLoop(
+    agents: AutoAgent[],
+    maxIterations: number,
+    userPrompt: string,
+    stateContext: string,
+    structuredOutputs: StructuredAgentOutput[],
+    previousOutputs: Map<string, string>,
+    blockerReason: string,
+  ): Promise<FeedbackLoopResult> {
+    const designer = agents.find(a => a.name === 'product_designer');
+    const developer = agents.find(a => a.name === 'developer');
+    if (!designer || !developer) {
+      return { additionalRuns: [], additionalCost: 0, additionalDuration: 0, additionalStructuredOutputs: [] };
+    }
+
+    return this.feedbackLoop(
+      designer,
+      developer,
+      maxIterations,
+      userPrompt,
+      stateContext,
+      structuredOutputs,
+      previousOutputs,
+      blockerReason,
+    );
   }
 
   abort(): void {

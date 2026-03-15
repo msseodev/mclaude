@@ -1,4 +1,4 @@
-import type { AutoAgent, AutoFinding, FailureHistoryEntry } from './types';
+import type { AutoAgent, AutoFinding, FailureHistoryEntry, CEORequest } from './types';
 
 export interface StructuredAgentOutput {
   agentName: string;
@@ -17,6 +17,7 @@ export interface AgentContext {
   designerFeedback?: string;
   gitDiff?: string;
   screenFrames?: string[];  // Array of image file paths for visual analysis
+  ceoRequests?: CEORequest[];
 }
 
 export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
@@ -90,7 +91,7 @@ export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
     parts.push(`\n[Code Changes (git diff)]\n${ctx.gitDiff}`);
   }
 
-  // 8. Screen frames (for Product Designer)
+  // 8. Screen frames (for visual analysis agents: Product Designer, UX Planner)
   if (ctx.screenFrames && ctx.screenFrames.length > 0) {
     const frameList = ctx.screenFrames
       .map((f, i) => `${i + 1}. ${f}`)
@@ -98,6 +99,33 @@ export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
     parts.push(
       `\n[앱 화면 캡처]\n다음 이미지 파일들은 앱의 현재 상태를 순서대로 캡처한 것입니다.\n각 이미지를 Read 도구로 확인하여 UI/UX를 분석하세요:\n${frameList}`,
     );
+  }
+
+  // 9. CEO requests/responses
+  if (ctx.ceoRequests && ctx.ceoRequests.length > 0) {
+    const pending = ctx.ceoRequests.filter(r => r.status === 'pending');
+    const answered = ctx.ceoRequests.filter(r => r.status !== 'pending');
+
+    const ceoParts: string[] = ['\n[CEO 요청/응답]'];
+
+    if (answered.length > 0) {
+      ceoParts.push('CEO가 응답한 항목:');
+      for (const r of answered) {
+        ceoParts.push(`- [${r.status}] ${r.title}: ${r.ceo_response}`);
+      }
+    }
+
+    if (pending.length > 0) {
+      ceoParts.push('대기 중인 요청 (이미 요청됨, 중복 요청하지 마세요):');
+      for (const r of pending) {
+        ceoParts.push(`- ${r.title} (${r.type})`);
+      }
+    }
+
+    ceoParts.push('\nCEO에게 새 요청이 필요하면 출력에 포함하세요:');
+    ceoParts.push('{ "ceo_requests": [{ "type": "permission|resource|decision|information", "title": "제목", "description": "상세 설명", "blocking": false }] }');
+
+    parts.push(ceoParts.join('\n'));
   }
 
   return parts.join('\n\n');

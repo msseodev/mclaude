@@ -7,6 +7,8 @@ export type FindingPriority = 'P0' | 'P1' | 'P2' | 'P3';
 export type FindingStatus = 'open' | 'in_progress' | 'resolved' | 'wont_fix' | 'duplicate';
 export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'skipped';
 export type PromptVariantStatus = 'active' | 'evaluating' | 'retired' | 'original';
+export type CEORequestType = 'permission' | 'resource' | 'decision' | 'information';
+export type CEORequestStatus = 'pending' | 'approved' | 'rejected' | 'answered';
 
 // --- DB Entities ---
 export interface AutoSession {
@@ -76,6 +78,7 @@ export interface AutoAgent {
   system_prompt: string;
   model: string;
   pipeline_order: number;
+  parallel_group: string | null;  // Agents with same non-null group run in parallel
   enabled: number;       // SQLite integer 0/1
   is_builtin: number;    // SQLite integer 0/1
   created_at: string;
@@ -116,6 +119,21 @@ export interface PromptVariant {
   avg_score: number | null;
   cycles_evaluated: number;
   created_at: string;
+}
+
+export interface CEORequest {
+  id: string;
+  session_id: string;
+  cycle_id: string | null;
+  from_agent: string;
+  type: CEORequestType;
+  title: string;
+  description: string;
+  blocking: number;          // SQLite 0/1
+  status: CEORequestStatus;
+  ceo_response: string | null;
+  created_at: string;
+  responded_at: string | null;
 }
 
 export interface AutoSettings {
@@ -168,6 +186,12 @@ export type AutoSSEEventType =
   | 'evolution_completed'
   | 'prompt_mutated'
   | 'prompt_rollback'
+  | 'parallel_group_start'
+  | 'parallel_group_complete'
+  | 'planning_review_start'
+  | 'planning_dev_review'
+  | 'ceo_request_created'
+  | 'ceo_request_responded'
   | 'error';
 
 export interface AutoSSEEvent {

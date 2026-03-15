@@ -641,9 +641,11 @@ class CycleEngineImpl {
 
     const now = new Date().toISOString();
 
-    // Extract findings from Product Designer output
+    // Extract findings from Planning Moderator or Product Designer output
     const createdFindings: Array<{ priority: string; title: string; category: string }> = [];
-    const designerRun = result.agentRuns.find(r => r.agent_name === 'Product Designer');
+    const designerRun = result.agentRuns.find(r =>
+      r.agent_name === 'Planning Moderator' || r.agent_name === 'Product Designer'
+    );
     if (designerRun?.output) {
       const extractor = new FindingExtractor();
       const existingFindings = getAutoFindings({ session_id: this.currentSessionId });
@@ -1271,7 +1273,7 @@ export function buildCycleDoc(
 
   lines.push('', '## Agent Results', '');
 
-  const agentNames = ['Product Designer', 'Developer', 'Reviewer', 'QA Engineer'];
+  const agentNames = ['UX Planner', 'Tech Planner', 'Biz Planner', 'Planning Moderator', 'Product Designer', 'Developer', 'Reviewer', 'QA Engineer'];
   const runsByName = new Map(result.agentRuns.map(r => [r.agent_name, r]));
 
   for (const name of agentNames) {

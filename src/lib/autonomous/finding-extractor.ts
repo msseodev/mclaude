@@ -15,7 +15,7 @@ export class FindingExtractor {
     try {
       const parsed = JSON.parse(jsonBlock);
 
-      // Support both "findings" format and Product Designer's "features" format
+      // Support "findings", Product Designer's "features", and Moderator's "agreed_items" formats
       let rawFindings: Record<string, unknown>[];
       if (Array.isArray(parsed.findings)) {
         rawFindings = parsed.findings;
@@ -25,6 +25,13 @@ export class FindingExtractor {
           ...f,
           category: f.category || 'improvement',
           file_path: Array.isArray(f.relevant_files) ? f.relevant_files[0] : f.file_path,
+        }));
+      } else if (Array.isArray(parsed.agreed_items)) {
+        // Convert Planning Moderator's agreed_items to findings format
+        rawFindings = parsed.agreed_items.map((item: Record<string, unknown>) => ({
+          ...item,
+          category: item.category || 'improvement',
+          file_path: item.file_path || null,
         }));
       } else {
         rawFindings = [];
@@ -42,20 +49,25 @@ export class FindingExtractor {
   /**
    * Extract JSON block from Claude output.
    * Looks for:
-   * 1. ```json ... ``` code block
-   * 2. { "findings": ... } raw JSON
+   * 1. ```json ... ``` code block containing findings, features, or agreed_items
+   * 2. Raw JSON with findings, features, or agreed_items
    */
   private extractJsonBlock(text: string): string | null {
+    const knownKeys = ['"findings"', '"features"', '"agreed_items"'];
+
     // Try code block first
     const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (codeBlockMatch) {
       const content = codeBlockMatch[1].trim();
-      if (content.includes('"findings"')) return content;
+      if (knownKeys.some(key => content.includes(key))) return content;
     }
 
-    // Try raw JSON
-    const jsonMatch = text.match(/\{[\s\S]*"findings"[\s\S]*\}/);
-    if (jsonMatch) return jsonMatch[0];
+    // Try raw JSON for each known key
+    for (const key of knownKeys) {
+      const pattern = new RegExp(`\\{[\\s\\S]*${key.replace(/"/g, '"')}[\\s\\S]*\\}`);
+      const jsonMatch = text.match(pattern);
+      if (jsonMatch) return jsonMatch[0];
+    }
 
     return null;
   }

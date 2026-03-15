@@ -1,6 +1,6 @@
 import { getDb } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-import type { AutoSession, AutoCycle, AutoFinding, AutoSettings, AutoUserPrompt, AutoAgent, AutoAgentRun } from './types';
+import type { AutoSession, AutoCycle, AutoFinding, AutoSettings, AutoUserPrompt, AutoAgent, AutoAgentRun, CEORequest, CEORequestType, CEORequestStatus } from './types';
 import { seedBuiltinAgents } from './seed-agents';
 import { initEvolutionTables } from './evolution-db';
 
@@ -135,6 +135,13 @@ export function initAutoTables(): void {
     // Column already exists
   }
 
+  // Migration: add parallel_group column to auto_agents
+  try {
+    db.exec('ALTER TABLE auto_agents ADD COLUMN parallel_group TEXT');
+  } catch {
+    // Column already exists
+  }
+
   // Re-seed to populate model for built-in agents
   seedBuiltinAgents(db);
 
@@ -191,6 +198,25 @@ export function initAutoTables(): void {
 
   // Initialize evolution tables
   initEvolutionTables();
+
+  // v6: CEO escalation requests table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auto_ceo_requests (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      cycle_id TEXT,
+      from_agent TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'information',
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      blocking INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      ceo_response TEXT,
+      created_at TEXT NOT NULL,
+      responded_at TEXT,
+      FOREIGN KEY (session_id) REFERENCES auto_sessions(id) ON DELETE CASCADE
+    );
+  `);
 }
 
 // Initialize tables on first import
@@ -478,16 +504,17 @@ export function getAutoAgent(id: string): AutoAgent | undefined {
   return db.prepare('SELECT * FROM auto_agents WHERE id = ?').get(id) as AutoAgent | undefined;
 }
 
-export function createAutoAgent(data: { name: string; display_name: string; role_description: string; system_prompt: string; pipeline_order: number; model?: string }): AutoAgent {
+export function createAutoAgent(data: { name: string; display_name: string; role_description: string; system_prompt: string; pipeline_order: number; model?: string; parallel_group?: string | null }): AutoAgent {
   const db = getDb();
   const id = uuidv4();
   const now = new Date().toISOString();
   const model = data.model || 'claude-opus-4-6';
-  db.prepare('INSERT INTO auto_agents (id, name, display_name, role_description, system_prompt, pipeline_order, model, enabled, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)').run(id, data.name, data.display_name, data.role_description, data.system_prompt, data.pipeline_order, model, now, now);
+  const parallelGroup = data.parallel_group ?? null;
+  db.prepare('INSERT INTO auto_agents (id, name, display_name, role_description, system_prompt, pipeline_order, model, parallel_group, enabled, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)').run(id, data.name, data.display_name, data.role_description, data.system_prompt, data.pipeline_order, model, parallelGroup, now, now);
   return getAutoAgent(id)!;
 }
 
-export function updateAutoAgent(id: string, data: Partial<Pick<AutoAgent, 'display_name' | 'role_description' | 'system_prompt' | 'pipeline_order' | 'enabled' | 'model'>>): AutoAgent | undefined {
+export function updateAutoAgent(id: string, data: Partial<Pick<AutoAgent, 'display_name' | 'role_description' | 'system_prompt' | 'pipeline_order' | 'enabled' | 'model' | 'parallel_group'>>): AutoAgent | undefined {
   const db = getDb();
   const existing = getAutoAgent(id);
   if (!existing) return undefined;
@@ -498,7 +525,8 @@ export function updateAutoAgent(id: string, data: Partial<Pick<AutoAgent, 'displ
   const pipeline_order = data.pipeline_order ?? existing.pipeline_order;
   const enabled = data.enabled !== undefined ? data.enabled : existing.enabled;
   const model = data.model ?? existing.model;
-  db.prepare('UPDATE auto_agents SET display_name = ?, role_description = ?, system_prompt = ?, pipeline_order = ?, enabled = ?, model = ?, updated_at = ? WHERE id = ?').run(display_name, role_description, system_prompt, pipeline_order, enabled, model, now, id);
+  const parallel_group = data.parallel_group !== undefined ? data.parallel_group : existing.parallel_group;
+  db.prepare('UPDATE auto_agents SET display_name = ?, role_description = ?, system_prompt = ?, pipeline_order = ?, enabled = ?, model = ?, parallel_group = ?, updated_at = ? WHERE id = ?').run(display_name, role_description, system_prompt, pipeline_order, enabled, model, parallel_group, now, id);
   return getAutoAgent(id);
 }
 
@@ -564,4 +592,55 @@ export function getAutoAgentRunsByCycle(cycleId: string): AutoAgentRun[] {
 export function getAutoAgentRun(id: string): AutoAgentRun | undefined {
   const db = getDb();
   return db.prepare('SELECT * FROM auto_agent_runs WHERE id = ?').get(id) as AutoAgentRun | undefined;
+}
+
+// --- CEO Requests CRUD ---
+
+export function createCEORequest(data: {
+  session_id: string;
+  cycle_id?: string;
+  from_agent: string;
+  type: CEORequestType;
+  title: string;
+  description: string;
+  blocking?: boolean;
+}): CEORequest {
+  const db = getDb();
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  db.prepare(
+    'INSERT INTO auto_ceo_requests (id, session_id, cycle_id, from_agent, type, title, description, blocking, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, data.session_id, data.cycle_id ?? null, data.from_agent, data.type, data.title, data.description, data.blocking ? 1 : 0, 'pending', now);
+  return db.prepare('SELECT * FROM auto_ceo_requests WHERE id = ?').get(id) as CEORequest;
+}
+
+export function getCEORequests(sessionId: string): CEORequest[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_ceo_requests WHERE session_id = ? ORDER BY created_at DESC').all(sessionId) as CEORequest[];
+}
+
+export function getCEORequest(id: string): CEORequest | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM auto_ceo_requests WHERE id = ?').get(id) as CEORequest | undefined;
+}
+
+export function respondToCEORequest(id: string, data: {
+  status: CEORequestStatus;
+  ceo_response: string;
+}): CEORequest | undefined {
+  const db = getDb();
+  const existing = getCEORequest(id);
+  if (!existing) return undefined;
+  const now = new Date().toISOString();
+  db.prepare(
+    'UPDATE auto_ceo_requests SET status = ?, ceo_response = ?, responded_at = ? WHERE id = ?'
+  ).run(data.status, data.ceo_response, now, id);
+  return getCEORequest(id);
+}
+
+export function getPendingCEORequests(sessionId: string): CEORequest[] {
+  const db = getDb();
+  return db.prepare(
+    "SELECT * FROM auto_ceo_requests WHERE session_id = ? AND status = 'pending' ORDER BY created_at ASC"
+  ).all(sessionId) as CEORequest[];
 }

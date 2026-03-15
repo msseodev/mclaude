@@ -10,6 +10,8 @@ vi.mock('../../src/lib/autonomous/db', () => ({
   getAllAutoSettings: vi.fn(),
   getAutoUserPrompts: vi.fn(),
   getAutoCycle: vi.fn(),
+  getCEORequests: vi.fn(() => []),
+  createCEORequest: vi.fn(),
 }));
 
 vi.mock('../../src/lib/db', () => ({
@@ -32,6 +34,7 @@ vi.mock('../../src/lib/autonomous/agent-context-builder', () => ({
 
 vi.mock('../../src/lib/autonomous/output-parser', () => ({
   parseAgentOutput: vi.fn(() => ({ summary: 'test summary', structuredData: null })),
+  parseCEORequests: vi.fn(() => []),
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
