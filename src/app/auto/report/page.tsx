@@ -58,6 +58,20 @@ const sessionStatusLabel: Record<string, string> = {
   stopped: '중단',
 };
 
+const requestTypeLabel: Record<string, string> = {
+  permission: '권한',
+  resource: '리소스',
+  decision: '의사결정',
+  information: '정보',
+};
+
+const requestStatusLabel: Record<string, string> = {
+  pending: '대기중',
+  approved: '승인',
+  rejected: '거부',
+  answered: '답변완료',
+};
+
 // --- Badge variant helpers ---
 
 function findingStatusBadgeVariant(status: string): BadgeVariant {
@@ -92,7 +106,42 @@ function cycleStatusBadgeVariant(status: string): BadgeVariant {
   }
 }
 
+function ceoRequestTypeBadgeVariant(type: string): BadgeVariant {
+  switch (type) {
+    case 'permission': return 'red';
+    case 'resource': return 'yellow';
+    case 'decision': return 'blue';
+    case 'information': return 'green';
+    default: return 'gray';
+  }
+}
+
+function ceoRequestStatusBadgeVariant(status: string): BadgeVariant {
+  switch (status) {
+    case 'pending': return 'yellow';
+    case 'approved': return 'green';
+    case 'rejected': return 'red';
+    case 'answered': return 'blue';
+    default: return 'gray';
+  }
+}
+
 // --- Types ---
+
+interface CEORequestItem {
+  id: string;
+  session_id: string;
+  cycle_id: string | null;
+  from_agent: string;
+  type: string;
+  title: string;
+  description: string;
+  blocking: number;
+  status: string;
+  ceo_response: string | null;
+  created_at: string;
+  responded_at: string | null;
+}
 
 interface ReportData {
   session: {
@@ -139,6 +188,10 @@ interface ReportData {
     duration: number | null;
     completedAt: string | null;
   }>;
+  ceoRequests?: {
+    pending: CEORequestItem[];
+    responded: CEORequestItem[];
+  };
 }
 
 // --- Helper functions ---
@@ -193,6 +246,11 @@ export default function AutoReportPage() {
   const [isPermanent, setIsPermanent] = useState(true);
   const [cycleCount, setCycleCount] = useState(5);
   const [submitting, setSubmitting] = useState(false);
+
+  // CEO request response state
+  const [ceoResponses, setCeoResponses] = useState<Record<string, string>>({});
+  const [ceoSubmitting, setCeoSubmitting] = useState<Record<string, boolean>>({});
+  const [showRespondedRequests, setShowRespondedRequests] = useState(false);
 
   const fetchReport = useCallback(async () => {
     try {
@@ -260,6 +318,38 @@ export default function AutoReportPage() {
       showToast('지시사항 전송에 실패했습니다.', 'error');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleCEORespond(requestId: string, status: string) {
+    const responseText = ceoResponses[requestId]?.trim();
+    if (!responseText) {
+      showToast('응답 내용을 입력하세요.', 'error');
+      return;
+    }
+    setCeoSubmitting(prev => ({ ...prev, [requestId]: true }));
+    try {
+      const res = await fetch(`/api/auto/report/requests/${requestId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, response: responseText }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || '응답 전송에 실패했습니다.', 'error');
+        return;
+      }
+      showToast('응답이 전송되었습니다.', 'success');
+      setCeoResponses(prev => {
+        const updated = { ...prev };
+        delete updated[requestId];
+        return updated;
+      });
+      fetchReport();
+    } catch {
+      showToast('응답 전송에 실패했습니다.', 'error');
+    } finally {
+      setCeoSubmitting(prev => ({ ...prev, [requestId]: false }));
     }
   }
 
@@ -466,6 +556,135 @@ export default function AutoReportPage() {
           <p className="text-sm text-gray-400">작업 내역이 없습니다.</p>
         )}
       </div>
+
+      {/* CEO Requests Section */}
+      {report.ceoRequests && (report.ceoRequests.pending.length > 0 || report.ceoRequests.responded.length > 0) && (
+        <div className="mb-6 rounded-lg border border-orange-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-lg font-semibold text-gray-900">
+            CEO 요청 사항
+            {report.ceoRequests.pending.length > 0 && (
+              <Badge variant="red" className="ml-2">
+                {report.ceoRequests.pending.length}건 대기중
+              </Badge>
+            )}
+          </h2>
+
+          {/* Pending requests */}
+          {report.ceoRequests.pending.length > 0 && (
+            <div className="space-y-4">
+              {report.ceoRequests.pending.map((req) => (
+                <div
+                  key={req.id}
+                  className={`rounded-lg border p-4 ${req.blocking ? 'border-red-300 bg-red-50' : 'border-yellow-300 bg-yellow-50'}`}
+                >
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <Badge variant={ceoRequestTypeBadgeVariant(req.type)}>
+                      {requestTypeLabel[req.type] ?? req.type}
+                    </Badge>
+                    {req.blocking === 1 && (
+                      <Badge variant="red">차단</Badge>
+                    )}
+                    <span className="text-sm font-semibold text-gray-900">{req.title}</span>
+                  </div>
+                  <div className="mb-1 text-xs text-gray-500">
+                    요청자: {req.from_agent} | {formatDateTime(req.created_at)}
+                  </div>
+                  {req.description && (
+                    <p className="mb-3 text-sm text-gray-700">{req.description}</p>
+                  )}
+                  {req.blocking === 1 && (
+                    <p className="mb-3 text-xs font-medium text-red-600">
+                      CEO 응답 전까지 관련 작업이 보류됩니다.
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    <textarea
+                      value={ceoResponses[req.id] ?? ''}
+                      onChange={(e) => setCeoResponses(prev => ({ ...prev, [req.id]: e.target.value }))}
+                      placeholder="응답을 입력하세요..."
+                      rows={2}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <div className="flex gap-2">
+                      {(req.type === 'permission' || req.type === 'resource') && (
+                        <>
+                          <Button
+                            size="sm"
+                            onClick={() => handleCEORespond(req.id, 'approved')}
+                            loading={ceoSubmitting[req.id]}
+                            disabled={!ceoResponses[req.id]?.trim()}
+                          >
+                            승인
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleCEORespond(req.id, 'rejected')}
+                            loading={ceoSubmitting[req.id]}
+                            disabled={!ceoResponses[req.id]?.trim()}
+                          >
+                            거부
+                          </Button>
+                        </>
+                      )}
+                      <Button
+                        size="sm"
+                        variant={req.type === 'permission' || req.type === 'resource' ? 'secondary' : undefined}
+                        onClick={() => handleCEORespond(req.id, 'answered')}
+                        loading={ceoSubmitting[req.id]}
+                        disabled={!ceoResponses[req.id]?.trim()}
+                      >
+                        답변
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Responded requests (collapsible) */}
+          {report.ceoRequests.responded.length > 0 && (
+            <div className={report.ceoRequests.pending.length > 0 ? 'mt-4' : ''}>
+              <button
+                onClick={() => setShowRespondedRequests(!showRespondedRequests)}
+                className="flex items-center gap-1 text-sm font-medium text-gray-600 hover:text-gray-900"
+              >
+                <span className="text-xs">{showRespondedRequests ? '\u25BC' : '\u25B6'}</span>
+                처리된 요청 ({report.ceoRequests.responded.length}건)
+              </button>
+              {showRespondedRequests && (
+                <div className="mt-3 space-y-2">
+                  {report.ceoRequests.responded.map((req) => (
+                    <div
+                      key={req.id}
+                      className="rounded-lg border border-gray-200 bg-gray-50 p-3"
+                    >
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <Badge variant={ceoRequestStatusBadgeVariant(req.status)}>
+                          {requestStatusLabel[req.status] ?? req.status}
+                        </Badge>
+                        <Badge variant={ceoRequestTypeBadgeVariant(req.type)}>
+                          {requestTypeLabel[req.type] ?? req.type}
+                        </Badge>
+                        <span className="text-sm font-medium text-gray-700">{req.title}</span>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        요청자: {req.from_agent} | 응답: {req.responded_at ? formatDateTime(req.responded_at) : '\u2014'}
+                      </div>
+                      {req.ceo_response && (
+                        <p className="mt-1 text-sm text-gray-600">
+                          <span className="font-medium">CEO 응답:</span> {req.ceo_response}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Instruction Input */}
       <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">

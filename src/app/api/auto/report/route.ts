@@ -4,6 +4,7 @@ import {
   getAutoSession,
   getAutoCyclesBySession,
   getAutoFindings,
+  getCEORequests,
   initAutoTables,
 } from '@/lib/autonomous/db';
 import type { AutoCycle } from '@/lib/autonomous/types';
@@ -35,6 +36,7 @@ export async function GET(request: NextRequest) {
 
     const cycles = getAutoCyclesBySession(session.id);
     const findings = getAutoFindings({ session_id: session.id });
+    const ceoRequests = getCEORequests(session.id);
 
     const report = {
       session: {
@@ -81,6 +83,10 @@ export async function GET(request: NextRequest) {
         duration: c.duration_ms,
         completedAt: c.completed_at,
       })),
+      ceoRequests: {
+        pending: ceoRequests.filter(r => r.status === 'pending'),
+        responded: ceoRequests.filter(r => r.status !== 'pending'),
+      },
     };
 
     return NextResponse.json(report);
