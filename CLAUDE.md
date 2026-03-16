@@ -18,7 +18,9 @@ A Claude Code automation tool that queues multiple prompts for sequential execut
 ```
 src/
 ├── app/
-│   ├── api/           # API Routes (prompts, plans, run, history, settings)
+│   ├── api/           # API Routes (prompts, plans, run, history, settings, auto)
+│   ├── auto/          # Autonomous mode pages (dashboard, findings, agents, cycles)
+│   ├── chat/          # Chat interface page
 │   ├── history/       # Execution history page
 │   ├── plans/         # Execution plans page
 │   ├── prompts/       # Prompt management page
@@ -27,8 +29,20 @@ src/
 ├── components/
 │   ├── layout/        # AppLayout
 │   └── ui/            # Button, Badge, Modal, Toast
-├── hooks/             # useRunStatus, useSSE
+├── hooks/             # useRunStatus, useAutoStatus, useSSE
 ├── lib/
+│   ├── autonomous/           # Autonomous mode engine
+│   │   ├── cycle-engine.ts         # Cycle orchestrator (core loop)
+│   │   ├── pipeline-executor.ts    # Multi-agent pipeline execution
+│   │   ├── watchdog.ts             # Hourly stuck-cycle detection
+│   │   ├── agent-context-builder.ts # Agent prompt context assembly
+│   │   ├── seed-agents.ts          # Built-in agent definitions
+│   │   ├── finding-extractor.ts    # Extract findings from agent output
+│   │   ├── prompt-evolver.ts       # Prompt mutation & scoring
+│   │   ├── git-manager.ts          # Git checkpoint/rollback
+│   │   ├── state-manager.ts        # SESSION-STATE.md management
+│   │   ├── db.ts                   # Autonomous mode DB layer
+│   │   └── types.ts                # Autonomous mode types
 │   ├── claude-executor.ts    # Claude CLI process management
 │   ├── run-manager.ts        # Queue execution engine (singleton)
 │   ├── stream-parser.ts      # stream-json parsing

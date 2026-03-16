@@ -4,9 +4,20 @@ A Claude Code automation tool that queues multiple prompts for sequential execut
 
 ## Features
 
+### Manual Mode
 - **Prompt Queue Management** — Drag-and-drop reordering, CRUD operations
 - **Execution Plans** — Combine global and plan-level prompts into execution plans
 - **Sequential Auto-Execution** — Execute queued prompts one by one via Claude Code CLI
+
+### Autonomous Mode (Multi-Agent Pipeline)
+- **Agent Pipeline** — UX/Tech/Biz Planners (parallel) → Planning Moderator → Developer → Reviewer → QA Engineer
+- **CEO Escalation** — Agents can request human decisions; responses are injected into subsequent cycles
+- **Watchdog** — Hourly health check via separate Opus session to detect and kill stuck cycles
+- **Mid-Session Prompts** — Inject new instructions while autonomous mode is running
+- **Prompt Evolution** — Automatic prompt mutation and scoring to improve agent performance over time
+- **Custom Agents** — Define additional agents with custom system prompts and pipeline ordering
+
+### Shared
 - **Automatic Rate Limit Handling** — Detects rate limits via exit codes, stream events, and text patterns; retries with exponential backoff (5min~40min)
 - **Real-time Monitoring** — SSE-based streaming for live output and tool usage tracking
 - **Execution History** — Stores cost, duration, and output logs in SQLite
@@ -37,7 +48,9 @@ Access at http://localhost:3000.
 ```
 src/
 ├── app/
-│   ├── api/           # API Routes (prompts, plans, run, history, settings)
+│   ├── api/           # API Routes (prompts, plans, run, history, settings, auto)
+│   ├── auto/          # Autonomous mode pages (dashboard, findings, agents, cycles, etc.)
+│   ├── chat/          # Chat interface page
 │   ├── history/       # Execution history page
 │   ├── plans/         # Execution plans page
 │   ├── prompts/       # Prompt management page
@@ -46,8 +59,30 @@ src/
 ├── components/
 │   ├── layout/        # AppLayout
 │   └── ui/            # Button, Badge, Modal, Toast
-├── hooks/             # useRunStatus, useSSE
+├── hooks/             # useRunStatus, useAutoStatus, useSSE
 ├── lib/
+│   ├── autonomous/           # Autonomous mode engine
+│   │   ├── cycle-engine.ts         # Cycle orchestrator (core loop)
+│   │   ├── pipeline-executor.ts    # Multi-agent pipeline execution
+│   │   ├── watchdog.ts             # Hourly stuck-cycle detection
+│   │   ├── agent-context-builder.ts # Agent prompt context assembly
+│   │   ├── seed-agents.ts          # Built-in agent definitions
+│   │   ├── finding-extractor.ts    # Extract findings from agent output
+│   │   ├── prompt-evolver.ts       # Prompt mutation & scoring
+│   │   ├── screen-capture.ts       # App screenshot capture for planners
+│   │   ├── git-manager.ts          # Git checkpoint/rollback
+│   │   ├── state-manager.ts        # SESSION-STATE.md management
+│   │   ├── phase-selector.ts       # Phase selection (v1 compat)
+│   │   ├── prompt-builder.ts       # Phase-specific prompts (v1 compat)
+│   │   ├── test-runner.ts          # Test execution & parsing
+│   │   ├── command-runner.ts       # Shell command execution with timeout
+│   │   ├── cycle-scorer.ts         # Cycle quality scoring
+│   │   ├── output-parser.ts        # Structured output parsing
+│   │   ├── summarizer.ts           # Output summarization & commit messages
+│   │   ├── codebase-scanner.ts     # Project structure analysis
+│   │   ├── user-prompt-builder.ts  # User prompt assembly
+│   │   ├── db.ts                   # Autonomous mode DB layer
+│   │   └── types.ts                # Autonomous mode types
 │   ├── claude-executor.ts    # Claude CLI process management
 │   ├── run-manager.ts        # Queue execution engine (singleton)
 │   ├── stream-parser.ts      # stream-json parsing
@@ -259,7 +294,11 @@ curl -X POST http://localhost:3000/api/run \
 
 ### 4. Auto Mode — Autonomous Agent Pipeline
 
-Auto mode runs an autonomous multi-agent pipeline (discovery → fix → test → review) in cycles against a target project.
+Auto mode runs an autonomous multi-agent pipeline in cycles against a target project. The default pipeline is:
+
+**UX Planner + Tech Planner + Biz Planner** (parallel) → **Planning Moderator** → **Developer** → **Reviewer** → **QA Engineer**
+
+Each cycle picks the highest-priority finding, runs the pipeline, and commits on success. A **watchdog** agent checks every hour to kill stuck cycles.
 
 #### Configure Auto Settings
 
@@ -327,6 +366,20 @@ curl http://localhost:3000/api/auto/prompts
 
 # Remove a mid-session prompt
 curl -X DELETE http://localhost:3000/api/auto/prompts/{id}
+```
+
+#### CEO Escalation (Agent → Human Requests)
+
+Agents can create escalation requests when they need human decisions.
+
+```bash
+# List pending CEO requests
+curl "http://localhost:3000/api/auto/findings?status=pending"
+
+# Respond to a CEO request
+curl -X PATCH http://localhost:3000/api/auto/ceo-requests/{id} \
+  -H 'Content-Type: application/json' \
+  -d '{ "response": "Approved. Proceed with the proposed approach." }'
 ```
 
 #### Monitor Auto Mode via SSE

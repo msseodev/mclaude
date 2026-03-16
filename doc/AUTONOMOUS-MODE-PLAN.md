@@ -1,4 +1,8 @@
-# Autonomous Mode - 설계 문서
+# Autonomous Mode - 설계 문서 (v1)
+
+> **Note**: 이 문서는 v1 설계 문서입니다. 현재 시스템은 v2 Agent Pipeline 기반으로 동작합니다.
+> v2 PRD는 [AUTONOMOUS-MODE-V2-PRD.md](./AUTONOMOUS-MODE-V2-PRD.md)를 참조하세요.
+> v1의 Phase 기반 사이클은 하위 호환으로 유지되며, Agent Pipeline 비활성화 시 fallback으로 사용됩니다.
 
 ## 1. 개요
 

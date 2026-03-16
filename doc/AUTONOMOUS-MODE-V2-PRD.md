@@ -825,3 +825,63 @@ v1에서 v2로의 전환은 **하위 호환**을 유지한다:
 - v2 사이클은 `phase = 'pipeline'`으로 구분
 - 기존 settings, findings, sessions 테이블은 수정 최소화
 - Agent Pipeline이 비활성화되면 v1 방식으로 fallback 가능 (설정으로 토글)
+
+---
+
+## 14. v2 이후 추가 기능 (구현 완료)
+
+PRD 작성 이후 추가로 구현된 기능들.
+
+### 14.1 Planning Pipeline (Parallel Agent Groups)
+
+기존 Product Designer 단일 에이전트를 **3인 기획 위원회 + 모더레이터** 구조로 교체:
+
+```
+[UX Planner] ──┐
+[Tech Planner] ─┼── (parallel) ──► [Planning Moderator] ──► Developer ──► Reviewer ──► QA
+[Biz Planner] ──┘
+```
+
+- `parallel_group` 컬럼으로 병렬 실행 그룹 정의
+- 모더레이터가 3개 관점의 분석을 종합하여 최종 기획서 작성
+- Finding 수정 시 `skip_designer_for_fixes` 설정에 따라 기획 단계 생략 가능
+
+### 14.2 CEO 에스컬레이션
+
+에이전트가 스스로 해결할 수 없는 문제를 CEO(사용자)에게 요청하는 시스템.
+
+- 에이전트 출력에 `ceo_requests` JSON을 포함하면 자동 파싱하여 DB에 저장
+- `blocking: true`인 요청은 CEO 응답 전까지 관련 작업 보류
+- CEO 응답은 다음 사이클 에이전트 컨텍스트에 주입됨
+- 요청 유형: `permission`, `resource`, `decision`, `information`
+
+### 14.3 Watchdog (Stuck Cycle Detection)
+
+1시간 간격으로 별도의 Opus 세션을 띄워 현재 cycle의 건강 상태를 점검.
+
+- **진단 항목**: 실행 시간, 출력 증가량, 비용, 현재 에이전트
+- **판단 기준**: 출력 미증가 + 1시간 이상 → stuck / 3시간 초과 → kill 고려 / 비용 $20 초과 → kill 고려
+- Kill 판단 시 pipeline abort → 다음 cycle로 진행
+- 평가 실패 시 보수적으로 CONTINUE (잘못 죽이지 않음)
+
+### 14.4 Prompt Evolution
+
+자동으로 에이전트 프롬프트를 변이(mutate)하고 성능을 평가하여 최적의 프롬프트를 찾는 시스템.
+
+- `evolution_enabled`, `evolution_interval`, `evolution_window` 설정
+- 매 N사이클마다 Claude가 현재 프롬프트를 분석하고 개선 버전을 생성
+- 평가 기간 동안 cycle score를 수집하여 기존 vs 변이 프롬프트 비교
+- 성능 하락 시 자동 롤백
+
+### 14.5 Sub-agent 가이드라인
+
+`claude-executor.ts`의 `append-system-prompt`에 sub-agent 관련 가이드 추가:
+
+- 외부 파일 다운로드는 sub-agent 대신 직접 `WebFetch`/`curl` 사용
+- 다운로드 2회 실패 시 스킵
+- sub-agent 5분 이상 대기 금지
+- 병렬 sub-agent 중 일부만 완료되면 결과로 진행
+
+### 14.6 Screen Capture
+
+모바일 앱 테스트 시 `mobile-mcp`를 활용하여 앱 화면을 캡처하고, UX Planner와 Product Designer에게 시각적 컨텍스트를 제공.
