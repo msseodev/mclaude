@@ -58,7 +58,7 @@ tests/
 ## Commands
 
 ```bash
-npm run dev          # Dev server (http://localhost:3000)
+npm run dev          # Dev server (http://localhost:51793)
 npm run build        # Production build
 npm run lint         # ESLint
 npm test             # Unit tests (vitest run)

@@ -44,6 +44,6 @@ export function loadConfig(): DiscordBotConfig {
     discordOwnerId,
     discordGuildId: process.env.DISCORD_GUILD_ID || null,
     mclaudeApiKey: process.env.MCLAUDE_API_KEY || '',
-    mclaudeBaseUrl: process.env.MCLAUDE_BASE_URL || 'http://localhost:3000',
+    mclaudeBaseUrl: process.env.MCLAUDE_BASE_URL || 'http://localhost:51793',
   };
 }

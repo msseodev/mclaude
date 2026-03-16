@@ -41,7 +41,7 @@ npm install
 npm run dev
 ```
 
-Access at http://localhost:3000.
+Access at http://localhost:51793.
 
 ## Project Structure
 
@@ -98,7 +98,7 @@ tests/
 ## Scripts
 
 ```bash
-npm run dev            # Dev server (http://localhost:3000)
+npm run dev            # Dev server (http://localhost:51793)
 npm run build          # Production build
 npm run lint           # ESLint
 npm test               # Unit tests
@@ -111,7 +111,7 @@ npm run test:e2e:headed # E2E tests (headed browser)
 
 ## API Guide for Claude Code
 
-Base URL: `http://localhost:3000`
+Base URL: `http://localhost:51793`
 
 All examples use `curl`. Responses are JSON.
 
@@ -119,10 +119,10 @@ All examples use `curl`. Responses are JSON.
 
 ```bash
 # Get current settings
-curl http://localhost:3000/api/settings
+curl http://localhost:51793/api/settings
 
 # Set target working directory and global prompt
-curl -X PUT http://localhost:3000/api/settings \
+curl -X PUT http://localhost:51793/api/settings \
   -H 'Content-Type: application/json' \
   -d '{
     "working_directory": "/path/to/your/project",
@@ -145,7 +145,7 @@ Manual mode lets you create individual prompts, arrange them in a queue, and exe
 
 ```bash
 # Create a prompt (auto-appended to queue)
-curl -X POST http://localhost:3000/api/prompts \
+curl -X POST http://localhost:51793/api/prompts \
   -H 'Content-Type: application/json' \
   -d '{
     "title": "Add login API",
@@ -154,7 +154,7 @@ curl -X POST http://localhost:3000/api/prompts \
   }'
 
 # working_directory is optional (falls back to global setting)
-curl -X POST http://localhost:3000/api/prompts \
+curl -X POST http://localhost:51793/api/prompts \
   -H 'Content-Type: application/json' \
   -d '{
     "title": "Add unit tests for login",
@@ -166,22 +166,22 @@ curl -X POST http://localhost:3000/api/prompts \
 
 ```bash
 # List all prompts (ordered by queue_order)
-curl http://localhost:3000/api/prompts
+curl http://localhost:51793/api/prompts
 
 # Update a prompt
-curl -X PUT http://localhost:3000/api/prompts/{id} \
+curl -X PUT http://localhost:51793/api/prompts/{id} \
   -H 'Content-Type: application/json' \
   -d '{ "title": "Updated title", "content": "Updated content" }'
 
 # Delete a prompt (remaining prompts auto-reorder)
-curl -X DELETE http://localhost:3000/api/prompts/{id}
+curl -X DELETE http://localhost:51793/api/prompts/{id}
 ```
 
 #### Reorder Queue
 
 ```bash
 # Pass ordered prompt IDs to set execution order
-curl -X PUT http://localhost:3000/api/prompts/reorder \
+curl -X PUT http://localhost:51793/api/prompts/reorder \
   -H 'Content-Type: application/json' \
   -d '{ "orderedIds": ["prompt-id-3", "prompt-id-1", "prompt-id-2"] }'
 ```
@@ -190,33 +190,33 @@ curl -X PUT http://localhost:3000/api/prompts/reorder \
 
 ```bash
 # Start execution (runs all pending prompts sequentially)
-curl -X POST http://localhost:3000/api/run
+curl -X POST http://localhost:51793/api/run
 
 # Start from a specific prompt
-curl -X POST http://localhost:3000/api/run \
+curl -X POST http://localhost:51793/api/run \
   -H 'Content-Type: application/json' \
   -d '{ "startFromPromptId": "prompt-id-2" }'
 
 # Check status
-curl http://localhost:3000/api/run/status
+curl http://localhost:51793/api/run/status
 
 # Pause / Resume / Stop
-curl -X PATCH http://localhost:3000/api/run \
+curl -X PATCH http://localhost:51793/api/run \
   -H 'Content-Type: application/json' \
   -d '{ "action": "pause" }'
 
-curl -X PATCH http://localhost:3000/api/run \
+curl -X PATCH http://localhost:51793/api/run \
   -H 'Content-Type: application/json' \
   -d '{ "action": "resume" }'
 
-curl -X DELETE http://localhost:3000/api/run
+curl -X DELETE http://localhost:51793/api/run
 ```
 
 #### Monitor via SSE
 
 ```bash
 # Stream real-time output (Server-Sent Events)
-curl -N http://localhost:3000/api/run/stream
+curl -N http://localhost:51793/api/run/stream
 ```
 
 Events: `text_delta`, `tool_start`, `tool_end`, `prompt_start`, `prompt_complete`, `prompt_failed`, `rate_limit`, `queue_complete`, `queue_stopped`
@@ -230,7 +230,7 @@ Plans let you bundle selected prompts with a plan-level context prompt. During p
 #### Create a Plan
 
 ```bash
-curl -X POST http://localhost:3000/api/plans \
+curl -X POST http://localhost:51793/api/plans \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "Auth Feature Sprint",
@@ -243,11 +243,11 @@ curl -X POST http://localhost:3000/api/plans \
 
 ```bash
 # Add existing prompts to the plan (one at a time)
-curl -X POST http://localhost:3000/api/plans/{planId}/items \
+curl -X POST http://localhost:51793/api/plans/{planId}/items \
   -H 'Content-Type: application/json' \
   -d '{ "prompt_id": "prompt-id-1" }'
 
-curl -X POST http://localhost:3000/api/plans/{planId}/items \
+curl -X POST http://localhost:51793/api/plans/{planId}/items \
   -H 'Content-Type: application/json' \
   -d '{ "prompt_id": "prompt-id-2" }'
 ```
@@ -255,7 +255,7 @@ curl -X POST http://localhost:3000/api/plans/{planId}/items \
 #### Reorder Plan Items
 
 ```bash
-curl -X PUT http://localhost:3000/api/plans/{planId}/items/reorder \
+curl -X PUT http://localhost:51793/api/plans/{planId}/items/reorder \
   -H 'Content-Type: application/json' \
   -d '{ "orderedIds": ["item-id-2", "item-id-1"] }'
 ```
@@ -263,29 +263,29 @@ curl -X PUT http://localhost:3000/api/plans/{planId}/items/reorder \
 #### Remove Item from Plan
 
 ```bash
-curl -X DELETE http://localhost:3000/api/plans/{planId}/items/{itemId}
+curl -X DELETE http://localhost:51793/api/plans/{planId}/items/{itemId}
 ```
 
 #### View Plan Details
 
 ```bash
 # List all plans
-curl http://localhost:3000/api/plans
+curl http://localhost:51793/api/plans
 
 # Get plan with its items
-curl http://localhost:3000/api/plans/{planId}
+curl http://localhost:51793/api/plans/{planId}
 ```
 
 #### Execute a Plan
 
 ```bash
 # Start plan execution
-curl -X POST http://localhost:3000/api/run \
+curl -X POST http://localhost:51793/api/run \
   -H 'Content-Type: application/json' \
   -d '{ "planId": "plan-id" }'
 
 # Start from a specific plan item
-curl -X POST http://localhost:3000/api/run \
+curl -X POST http://localhost:51793/api/run \
   -H 'Content-Type: application/json' \
   -d '{ "planId": "plan-id", "startFromPlanItemId": "item-id-3" }'
 ```
@@ -303,7 +303,7 @@ Each cycle picks the highest-priority finding, runs the pipeline, and commits on
 #### Configure Auto Settings
 
 ```bash
-curl -X PUT http://localhost:3000/api/auto/settings \
+curl -X PUT http://localhost:51793/api/auto/settings \
   -H 'Content-Type: application/json' \
   -d '{
     "target_project": "/path/to/target/project",
@@ -319,7 +319,7 @@ curl -X PUT http://localhost:3000/api/auto/settings \
 
 ```bash
 # Start with optional initial prompt
-curl -X POST http://localhost:3000/api/auto \
+curl -X POST http://localhost:51793/api/auto \
   -H 'Content-Type: application/json' \
   -d '{
     "targetProject": "/path/to/project",
@@ -327,25 +327,25 @@ curl -X POST http://localhost:3000/api/auto \
   }'
 
 # Check status
-curl http://localhost:3000/api/auto/status
+curl http://localhost:51793/api/auto/status
 
 # Pause immediately
-curl -X PATCH http://localhost:3000/api/auto \
+curl -X PATCH http://localhost:51793/api/auto \
   -H 'Content-Type: application/json' \
   -d '{ "action": "pause" }'
 
 # Pause after current cycle completes (graceful)
-curl -X PATCH http://localhost:3000/api/auto \
+curl -X PATCH http://localhost:51793/api/auto \
   -H 'Content-Type: application/json' \
   -d '{ "action": "pause_after_cycle" }'
 
 # Resume
-curl -X PATCH http://localhost:3000/api/auto \
+curl -X PATCH http://localhost:51793/api/auto \
   -H 'Content-Type: application/json' \
   -d '{ "action": "resume" }'
 
 # Stop
-curl -X DELETE http://localhost:3000/api/auto
+curl -X DELETE http://localhost:51793/api/auto
 ```
 
 #### Inject Mid-Session Prompts
@@ -354,7 +354,7 @@ Add instructions while autonomous mode is running. These are included in subsequ
 
 ```bash
 # Add a mid-session prompt (active for next 3 cycles)
-curl -X POST http://localhost:3000/api/auto/prompts \
+curl -X POST http://localhost:51793/api/auto/prompts \
   -H 'Content-Type: application/json' \
   -d '{
     "content": "Prioritize fixing the failing login test.",
@@ -362,10 +362,10 @@ curl -X POST http://localhost:3000/api/auto/prompts \
   }'
 
 # List mid-session prompts
-curl http://localhost:3000/api/auto/prompts
+curl http://localhost:51793/api/auto/prompts
 
 # Remove a mid-session prompt
-curl -X DELETE http://localhost:3000/api/auto/prompts/{id}
+curl -X DELETE http://localhost:51793/api/auto/prompts/{id}
 ```
 
 #### CEO Escalation (Agent → Human Requests)
@@ -374,10 +374,10 @@ Agents can create escalation requests when they need human decisions.
 
 ```bash
 # List pending CEO requests
-curl "http://localhost:3000/api/auto/findings?status=pending"
+curl "http://localhost:51793/api/auto/findings?status=pending"
 
 # Respond to a CEO request
-curl -X PATCH http://localhost:3000/api/auto/ceo-requests/{id} \
+curl -X PATCH http://localhost:51793/api/auto/ceo-requests/{id} \
   -H 'Content-Type: application/json' \
   -d '{ "response": "Approved. Proceed with the proposed approach." }'
 ```
@@ -385,33 +385,33 @@ curl -X PATCH http://localhost:3000/api/auto/ceo-requests/{id} \
 #### Monitor Auto Mode via SSE
 
 ```bash
-curl -N http://localhost:3000/api/auto/stream
+curl -N http://localhost:51793/api/auto/stream
 ```
 
 #### View Auto Mode History
 
 ```bash
 # List sessions
-curl http://localhost:3000/api/auto/sessions
+curl http://localhost:51793/api/auto/sessions
 
 # Get cycles for a session
-curl "http://localhost:3000/api/auto/cycles?sessionId={sessionId}"
+curl "http://localhost:51793/api/auto/cycles?sessionId={sessionId}"
 
 # Get agent runs for a cycle
-curl "http://localhost:3000/api/auto/agent-runs?cycleId={cycleId}"
+curl "http://localhost:51793/api/auto/agent-runs?cycleId={cycleId}"
 
 # Query findings
-curl "http://localhost:3000/api/auto/findings?status=open&priority=high"
+curl "http://localhost:51793/api/auto/findings?status=open&priority=high"
 ```
 
 #### Manage Agents
 
 ```bash
 # List all agents
-curl http://localhost:3000/api/auto/agents
+curl http://localhost:51793/api/auto/agents
 
 # Create custom agent
-curl -X POST http://localhost:3000/api/auto/agents \
+curl -X POST http://localhost:51793/api/auto/agents \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "security-scanner",
@@ -422,10 +422,10 @@ curl -X POST http://localhost:3000/api/auto/agents \
   }'
 
 # Toggle agent on/off
-curl -X PATCH http://localhost:3000/api/auto/agents/{id}/toggle
+curl -X PATCH http://localhost:51793/api/auto/agents/{id}/toggle
 
 # Delete custom agent (built-in agents cannot be deleted)
-curl -X DELETE http://localhost:3000/api/auto/agents/{id}
+curl -X DELETE http://localhost:51793/api/auto/agents/{id}
 ```
 
 ---
@@ -434,10 +434,10 @@ curl -X DELETE http://localhost:3000/api/auto/agents/{id}
 
 ```bash
 # List executions (paginated)
-curl "http://localhost:3000/api/history?limit=20&offset=0"
+curl "http://localhost:51793/api/history?limit=20&offset=0"
 
 # Get single execution detail (includes full output)
-curl http://localhost:3000/api/history/{executionId}
+curl http://localhost:51793/api/history/{executionId}
 ```
 
 Each execution record contains: `status`, `output`, `cost_usd`, `duration_ms`, `effective_prompt`, `started_at`, `completed_at`.
