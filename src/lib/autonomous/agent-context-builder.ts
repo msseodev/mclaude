@@ -1,4 +1,4 @@
-import type { AutoAgent, AutoFinding, FailureHistoryEntry, CEORequest } from './types';
+import type { AutoAgent, AutoFinding, FailureHistoryEntry, CEORequest, PipelineType } from './types';
 
 export interface StructuredAgentOutput {
   agentName: string;
@@ -18,6 +18,7 @@ export interface AgentContext {
   gitDiff?: string;
   screenFrames?: string[];  // Array of image file paths for visual analysis
   ceoRequests?: CEORequest[];
+  pipelineType?: PipelineType;
 }
 
 export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
@@ -128,6 +129,19 @@ export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
     parts.push(
       `\n[앱 화면 캡처]\n다음 이미지 파일들은 앱의 현재 상태를 순서대로 캡처한 것입니다.\n각 이미지를 Read 도구로 확인하여 UI/UX를 분석하세요:\n${frameList}`,
     );
+  }
+
+  // 9. QA mode override for fix/test_fix pipelines
+  if ((agent.name === 'qa_engineer' || agent.name === 'QA Engineer') && ctx.pipelineType && ctx.pipelineType !== 'discovery') {
+    parts.push(`\n[QA Mode: Fast Verification]
+이번 사이클은 ${ctx.pipelineType} 파이프라인입니다. mobile-mcp 수동 UI 테스트를 하지 마세요.
+
+대신 다음만 수행하세요:
+1. 프로젝트의 기존 테스트 명령어를 실행하세요 (예: flutter test, npm test 등)
+2. 빌드가 성공하는지 확인하세요
+3. 테스트 결과를 JSON 형식으로 보고하세요
+
+mobile-mcp 도구 (스크린샷, 탭, 스와이프 등)를 사용하지 마세요. 코드 기반 테스트 실행 결과만으로 판정하세요.`);
   }
 
   return parts.join('\n\n');

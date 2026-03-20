@@ -162,6 +162,7 @@ export class PipelineExecutor {
                 ? screenCapture.frames
                 : undefined,
               ceoRequests,
+              pipelineType: this.pipelineType,
             });
 
             return this.runSingleAgent(agent, context, 1);
@@ -282,6 +283,7 @@ export class PipelineExecutor {
             ? screenCapture.frames
             : undefined,
           ceoRequests,
+          pipelineType: this.pipelineType,
         });
 
         const result = await this.runSingleAgent(agent, context, 1);
