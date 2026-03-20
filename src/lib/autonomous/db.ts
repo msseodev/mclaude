@@ -195,6 +195,8 @@ export function initAutoTables(): void {
   insertSetting.run('evolution_window', '5');
   // v5 settings: screen capture
   insertSetting.run('screenshot_dir', '');
+  // v7 settings: global prompt for all agents
+  insertSetting.run('global_prompt', '');
 
   // Initialize evolution tables
   initEvolutionTables();
@@ -465,6 +467,8 @@ export function getAllAutoSettings(): AutoSettings {
     evolution_window: Number(getAutoSetting('evolution_window') ?? '5'),
     // v5 settings: screen capture
     screenshot_dir: getAutoSetting('screenshot_dir') ?? '',
+    // v7 settings: global prompt
+    global_prompt: getAutoSetting('global_prompt') ?? '',
   };
 }
 

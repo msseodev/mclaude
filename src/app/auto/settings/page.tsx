@@ -28,6 +28,7 @@ export default function AutoSettingsPage() {
     evolution_interval: 10,
     evolution_window: 5,
     screenshot_dir: '',
+    global_prompt: '',
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -186,6 +187,25 @@ export default function AutoSettingsPage() {
             />
             <p className="mt-1 text-xs text-gray-500">
               비어있으면 자동 감지합니다
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="auto-global-prompt" className="mb-1 block text-sm font-medium text-gray-700">
+              Global Prompt
+            </label>
+            <textarea
+              id="auto-global-prompt"
+              value={form.global_prompt}
+              onChange={(e) =>
+                setForm({ ...form, global_prompt: e.target.value })
+              }
+              rows={4}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="모든 에이전트에 공통으로 전달되는 지시사항..."
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              모든 에이전트(Planner, Developer, Reviewer, QA 등)의 system prompt 뒤에 주입됩니다
             </p>
           </div>
 

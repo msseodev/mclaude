@@ -115,7 +115,7 @@ export class PipelineExecutor {
       screenshotDir,
     });
 
-    const globalPrompt = getSetting('global_prompt') || '';
+    const globalPrompt = settings.global_prompt || '';
 
     const previousOutputs = new Map<string, string>();
     const structuredOutputs: StructuredAgentOutput[] = [];

@@ -31,6 +31,8 @@ export async function PUT(request: NextRequest) {
       'evolution_enabled', 'evolution_interval', 'evolution_window',
       // v5 settings: screen capture
       'screenshot_dir',
+      // v7 settings: global prompt
+      'global_prompt',
     ];
 
     for (const key of settingKeys) {
