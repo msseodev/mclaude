@@ -157,6 +157,9 @@ class CycleEngineImpl {
       this.codebaseSummaryCache = null;
     }
 
+    // Write initial SESSION-STATE.md immediately (don't wait for first cycle)
+    await this.updateStateFile();
+
     // Start the cycle loop
     this.processNextCycle();
   }
