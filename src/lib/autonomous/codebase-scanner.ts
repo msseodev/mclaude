@@ -1,289 +1,308 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { spawn, execFileSync } from 'child_process';
+import { getSetting } from '../db';
 
-export interface CodebaseSummary {
-  projectType: string;
-  routeMap: string[];
-  componentTree: string[];
-  keyFiles: string[];
-  dependencies: Record<string, string>;
-  scripts: Record<string, string>;
-}
-
-const MAX_LIST_ITEMS = 30;
-
-const KEY_CONFIG_FILES = [
+const CONFIG_FILES = [
   'package.json',
+  'pubspec.yaml',
+  'Cargo.toml',
+  'go.mod',
+  'pyproject.toml',
+  'build.gradle',
+  'build.gradle.kts',
+  'CMakeLists.txt',
+  'Makefile',
   'tsconfig.json',
   'next.config.js',
   'next.config.mjs',
   'next.config.ts',
   'vite.config.ts',
   'vite.config.js',
-  'tailwind.config.js',
-  'tailwind.config.ts',
-  'postcss.config.js',
-  'postcss.config.mjs',
-  '.eslintrc.js',
-  '.eslintrc.json',
-  'eslint.config.js',
-  'eslint.config.mjs',
-  'vitest.config.ts',
-  'playwright.config.ts',
+  'angular.json',
+  'vue.config.js',
+  'svelte.config.js',
+  'remix.config.js',
+  'astro.config.mjs',
+  'nuxt.config.ts',
   'Dockerfile',
   'docker-compose.yml',
   'docker-compose.yaml',
-  '.env.example',
-  'Cargo.toml',
-  'go.mod',
   'requirements.txt',
-  'pyproject.toml',
+  'setup.py',
+  'pom.xml',
+  '.env.example',
 ];
+
+const SOURCE_DIRS = ['lib', 'src', 'app', 'cmd', 'pkg', 'internal', 'test', 'tests'];
+
+const MAX_CONFIG_READ_SIZE = 5000;
+const README_MAX_LINES = 100;
+const LLM_TIMEOUT_MS = 60000;
+
+interface GatheredContext {
+  rootFiles: string[];
+  configContents: Map<string, string>;
+  sourceDirListings: Map<string, string[]>;
+  readmeContent: string | null;
+  claudeMdContent: string | null;
+}
 
 export class CodebaseScanner {
   constructor(private projectPath: string) {}
 
-  async scan(): Promise<CodebaseSummary> {
-    const [projectType, routeMap, componentTree, keyFiles, pkgData] = await Promise.all([
-      this.detectProjectType(),
-      this.scanRoutes(),
-      this.scanComponents(),
-      this.scanKeyFiles(),
-      this.readPackageJson(),
-    ]);
-
-    return {
-      projectType,
-      routeMap: routeMap.slice(0, MAX_LIST_ITEMS),
-      componentTree: componentTree.slice(0, MAX_LIST_ITEMS),
-      keyFiles,
-      dependencies: pkgData.dependencies,
-      scripts: pkgData.scripts,
-    };
+  /**
+   * Scan the codebase and return a markdown summary.
+   * Uses an LLM (haiku) to generate a project-agnostic summary from gathered context.
+   * Falls back to a minimal rule-based summary on failure.
+   */
+  async scan(): Promise<string> {
+    const context = await this.gatherContext();
+    const markdown = await this.generateLLMSummary(context);
+    return markdown;
   }
 
-  async detectProjectType(): Promise<string> {
-    // Check for language-specific files first
-    const checks: Array<{ file: string; type: string }> = [
-      { file: 'Cargo.toml', type: 'rust' },
-      { file: 'go.mod', type: 'go' },
-      { file: 'requirements.txt', type: 'python' },
-      { file: 'pyproject.toml', type: 'python' },
-    ];
+  /**
+   * @deprecated Use scan() directly -- it now returns markdown.
+   * Kept for backward compatibility; simply returns the pre-built markdown.
+   */
+  formatAsMarkdown(markdown: string): string {
+    return markdown;
+  }
 
-    for (const check of checks) {
-      if (await this.fileExists(path.join(this.projectPath, check.file))) {
-        return check.type;
-      }
-    }
+  // --- Context gathering (rule-based) ---
 
-    // Check package.json for JS/TS frameworks
+  private async gatherContext(): Promise<GatheredContext> {
+    const [rootFiles, configContents, sourceDirListings, readmeContent, claudeMdContent] =
+      await Promise.all([
+        this.listRootFiles(),
+        this.readConfigFiles(),
+        this.listSourceDirs(),
+        this.readFileHead('README.md', README_MAX_LINES),
+        this.readFileHead('CLAUDE.md', README_MAX_LINES),
+      ]);
+
+    return { rootFiles, configContents, sourceDirListings, readmeContent, claudeMdContent };
+  }
+
+  private async listRootFiles(): Promise<string[]> {
     try {
-      const pkgPath = path.join(this.projectPath, 'package.json');
-      const content = await fs.readFile(pkgPath, 'utf-8');
-      const pkg = JSON.parse(content);
-      const allDeps = {
-        ...(pkg.dependencies ?? {}),
-        ...(pkg.devDependencies ?? {}),
-      };
-
-      if (allDeps['next']) return 'nextjs';
-      if (allDeps['nuxt']) return 'nuxt';
-      if (allDeps['@angular/core']) return 'angular';
-      if (allDeps['svelte'] || allDeps['@sveltejs/kit']) return 'svelte';
-      if (allDeps['vue']) return 'vue';
-      if (allDeps['react']) return 'react';
-      if (allDeps['express']) return 'node-server';
-      if (allDeps['fastify']) return 'node-server';
-      if (allDeps['hono']) return 'node-server';
-
-      return 'node';
+      const entries = await fs.readdir(this.projectPath, { withFileTypes: true });
+      return entries
+        .map(e => e.isDirectory() ? e.name + '/' : e.name)
+        .filter(name => !name.startsWith('.') || name === '.env.example')
+        .sort();
     } catch {
-      return 'unknown';
+      return [];
     }
   }
 
-  async scanRoutes(): Promise<string[]> {
-    const routes: string[] = [];
-
-    // Try Next.js App Router first (src/app/**/page.tsx, route.ts)
-    const appRouterDirs = ['src/app', 'app'];
-    for (const dir of appRouterDirs) {
-      const absDir = path.join(this.projectPath, dir);
-      if (await this.dirExists(absDir)) {
-        const appRoutes = await this.findFiles(absDir, (name) =>
-          /^(page|route|layout|loading|error|not-found)\.(tsx?|jsx?|mdx?)$/.test(name)
-        );
-        for (const filePath of appRoutes) {
-          const rel = path.relative(absDir, filePath);
-          const routePath = '/' + path.dirname(rel).replace(/\\/g, '/');
-          const fileName = path.basename(filePath);
-          const normalizedRoute = routePath === '/.' ? '/' : routePath;
-          routes.push(`${normalizedRoute} (${fileName})`);
-        }
-        if (routes.length > 0) return routes;
+  private async readConfigFiles(): Promise<Map<string, string>> {
+    const contents = new Map<string, string>();
+    const reads = CONFIG_FILES.map(async (file) => {
+      try {
+        const filePath = path.join(this.projectPath, file);
+        const stat = await fs.stat(filePath);
+        if (!stat.isFile()) return;
+        const content = await fs.readFile(filePath, 'utf-8');
+        contents.set(file, content.slice(0, MAX_CONFIG_READ_SIZE));
+      } catch {
+        // File doesn't exist or isn't readable
       }
-    }
-
-    // Try Next.js Pages Router fallback (pages/**/*.tsx)
-    const pagesDirs = ['src/pages', 'pages'];
-    for (const dir of pagesDirs) {
-      const absDir = path.join(this.projectPath, dir);
-      if (await this.dirExists(absDir)) {
-        const pageFiles = await this.findFiles(absDir, (name) =>
-          /\.(tsx?|jsx?)$/.test(name) && !name.startsWith('_')
-        );
-        for (const filePath of pageFiles) {
-          const rel = path.relative(absDir, filePath);
-          const routePath = '/' + rel.replace(/\\/g, '/').replace(/\.(tsx?|jsx?)$/, '').replace(/\/index$/, '');
-          routes.push(routePath || '/');
-        }
-        if (routes.length > 0) return routes;
-      }
-    }
-
-    return routes;
+    });
+    await Promise.all(reads);
+    return contents;
   }
 
-  async scanComponents(): Promise<string[]> {
-    const components: string[] = [];
-    const componentDirs = ['src/components', 'components', 'src/ui', 'ui'];
-
-    for (const dir of componentDirs) {
-      const absDir = path.join(this.projectPath, dir);
-      if (await this.dirExists(absDir)) {
-        const files = await this.findFiles(absDir, (name) =>
-          /\.(tsx?|jsx?)$/.test(name)
-        );
-        for (const filePath of files) {
-          const rel = path.relative(this.projectPath, filePath);
-          components.push(rel);
-        }
+  private async listSourceDirs(): Promise<Map<string, string[]>> {
+    const listings = new Map<string, string[]>();
+    const checks = SOURCE_DIRS.map(async (dir) => {
+      try {
+        const absDir = path.join(this.projectPath, dir);
+        const stat = await fs.stat(absDir);
+        if (!stat.isDirectory()) return;
+        const entries = await fs.readdir(absDir, { withFileTypes: true });
+        const names = entries
+          .map(e => e.isDirectory() ? e.name + '/' : e.name)
+          .sort();
+        listings.set(dir, names);
+      } catch {
+        // Directory doesn't exist
       }
-    }
-
-    return components;
+    });
+    await Promise.all(checks);
+    return listings;
   }
 
-  async scanKeyFiles(): Promise<string[]> {
-    const found: string[] = [];
-    for (const file of KEY_CONFIG_FILES) {
-      if (await this.fileExists(path.join(this.projectPath, file))) {
-        found.push(file);
-      }
-    }
-    return found;
-  }
-
-  async readPackageJson(): Promise<{ dependencies: Record<string, string>; scripts: Record<string, string> }> {
+  private async readFileHead(fileName: string, maxLines: number): Promise<string | null> {
     try {
-      const pkgPath = path.join(this.projectPath, 'package.json');
-      const content = await fs.readFile(pkgPath, 'utf-8');
-      const pkg = JSON.parse(content);
-      return {
-        dependencies: {
-          ...(pkg.dependencies ?? {}),
-          ...(pkg.devDependencies ?? {}),
-        },
-        scripts: pkg.scripts ?? {},
-      };
+      const filePath = path.join(this.projectPath, fileName);
+      const content = await fs.readFile(filePath, 'utf-8');
+      const lines = content.split('\n').slice(0, maxLines);
+      return lines.join('\n');
     } catch {
-      return { dependencies: {}, scripts: {} };
+      return null;
     }
   }
 
-  formatAsMarkdown(summary: CodebaseSummary): string {
-    let md = `## Codebase Overview\n`;
-    md += `- **Project Type**: ${summary.projectType}\n\n`;
+  // --- LLM summary generation ---
 
-    if (summary.routeMap.length > 0) {
-      md += `### Route Map\n`;
-      for (const route of summary.routeMap) {
-        md += `- ${route}\n`;
-      }
-      if (summary.routeMap.length >= MAX_LIST_ITEMS) {
-        md += `- ... (truncated at ${MAX_LIST_ITEMS} items)\n`;
-      }
-      md += '\n';
-    }
+  private async generateLLMSummary(context: GatheredContext): Promise<string> {
+    const contextText = this.buildContextText(context);
+    const prompt = `Analyze this project and produce a concise markdown summary. Include:
+- Project type and tech stack
+- Directory structure overview
+- Key features/modules
+- Test infrastructure
+- Build/run commands
 
-    if (summary.componentTree.length > 0) {
-      md += `### Components\n`;
-      for (const comp of summary.componentTree) {
-        md += `- ${comp}\n`;
-      }
-      if (summary.componentTree.length >= MAX_LIST_ITEMS) {
-        md += `- ... (truncated at ${MAX_LIST_ITEMS} items)\n`;
-      }
-      md += '\n';
-    }
+Keep it under 50 lines. Start with "## Codebase Overview". This summary helps other AI agents understand the project context.
 
-    if (summary.keyFiles.length > 0) {
-      md += `### Key Files\n`;
-      for (const file of summary.keyFiles) {
-        md += `- ${file}\n`;
-      }
-      md += '\n';
-    }
+${contextText}`;
 
-    const depNames = Object.keys(summary.dependencies);
-    if (depNames.length > 0) {
-      md += `### Dependencies\n`;
-      for (const dep of depNames.slice(0, MAX_LIST_ITEMS)) {
-        md += `- ${dep}: ${summary.dependencies[dep]}\n`;
-      }
-      if (depNames.length > MAX_LIST_ITEMS) {
-        md += `- ... (${depNames.length - MAX_LIST_ITEMS} more)\n`;
-      }
-      md += '\n';
-    }
-
-    const scriptNames = Object.keys(summary.scripts);
-    if (scriptNames.length > 0) {
-      md += `### Scripts\n`;
-      for (const name of scriptNames) {
-        md += `- \`${name}\`: ${summary.scripts[name]}\n`;
-      }
-      md += '\n';
-    }
-
-    return md;
-  }
-
-  // --- Private helpers ---
-
-  private async fileExists(filePath: string): Promise<boolean> {
     try {
-      const stat = await fs.stat(filePath);
-      return stat.isFile();
-    } catch {
-      return false;
-    }
-  }
-
-  private async dirExists(dirPath: string): Promise<boolean> {
-    try {
-      const stat = await fs.stat(dirPath);
-      return stat.isDirectory();
-    } catch {
-      return false;
-    }
-  }
-
-  private async findFiles(dir: string, filter: (name: string) => boolean): Promise<string[]> {
-    const results: string[] = [];
-    try {
-      const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isFile() && filter(entry.name)) {
-          // In Node 20+, entry.parentPath is available; fall back to entry.path
-          const parentDir = (entry as unknown as { parentPath?: string }).parentPath ?? (entry as unknown as { path?: string }).path ?? dir;
-          results.push(path.join(parentDir, entry.name));
-        }
+      const claudeBinary = getSetting('claude_binary') || 'claude';
+      const result = await runClaudeOneShotWithModel(claudeBinary, prompt, 'haiku', LLM_TIMEOUT_MS);
+      if (result && result.trim().length > 0) {
+        return result.trim();
       }
     } catch {
-      // Directory might not be readable
+      // Fall through to fallback
     }
-    return results.sort();
+
+    return this.buildFallbackSummary(context);
   }
+
+  private buildContextText(context: GatheredContext): string {
+    const sections: string[] = [];
+
+    sections.push('### Root files');
+    if (context.rootFiles.length > 0) {
+      sections.push(context.rootFiles.join('\n'));
+    } else {
+      sections.push('(empty)');
+    }
+
+    if (context.configContents.size > 0) {
+      sections.push('\n### Config files');
+      for (const [file, content] of context.configContents) {
+        sections.push(`\n--- ${file} ---`);
+        sections.push(content);
+      }
+    }
+
+    if (context.sourceDirListings.size > 0) {
+      sections.push('\n### Source directories');
+      for (const [dir, entries] of context.sourceDirListings) {
+        sections.push(`\n${dir}/: ${entries.join(', ')}`);
+      }
+    }
+
+    if (context.readmeContent) {
+      sections.push('\n### README.md (first 100 lines)');
+      sections.push(context.readmeContent);
+    }
+
+    if (context.claudeMdContent) {
+      sections.push('\n### CLAUDE.md');
+      sections.push(context.claudeMdContent);
+    }
+
+    return sections.join('\n');
+  }
+
+  private buildFallbackSummary(context: GatheredContext): string {
+    const lines: string[] = ['## Codebase Overview'];
+    lines.push('');
+    lines.push('*LLM summary unavailable -- fallback to file listing.*');
+    lines.push('');
+
+    if (context.rootFiles.length > 0) {
+      lines.push('### Root Files');
+      for (const file of context.rootFiles.slice(0, 30)) {
+        lines.push(`- ${file}`);
+      }
+      lines.push('');
+    }
+
+    if (context.configContents.size > 0) {
+      lines.push('### Config Files Found');
+      for (const file of context.configContents.keys()) {
+        lines.push(`- ${file}`);
+      }
+      lines.push('');
+    }
+
+    if (context.sourceDirListings.size > 0) {
+      lines.push('### Source Directories');
+      for (const [dir, entries] of context.sourceDirListings) {
+        lines.push(`- ${dir}/ (${entries.length} entries)`);
+      }
+      lines.push('');
+    }
+
+    return lines.join('\n');
+  }
+}
+
+// --- Helper: one-shot Claude call with model override ---
+
+function runClaudeOneShotWithModel(
+  binary: string,
+  prompt: string,
+  model: string,
+  timeoutMs: number,
+): Promise<string> {
+  return new Promise((resolve) => {
+    let resolvedBinary: string;
+    try {
+      resolvedBinary = path.isAbsolute(binary)
+        ? binary
+        : execFileSync('which', [binary], { encoding: 'utf-8' }).trim();
+    } catch {
+      resolve('');
+      return;
+    }
+
+    const env = { ...process.env };
+    delete env.CLAUDECODE;
+    delete env.CLAUDE_CODE_ENTRYPOINT;
+
+    const proc = spawn(resolvedBinary, [
+      '-p', prompt,
+      '--output-format', 'text',
+      '--model', model,
+      '--max-turns', '1',
+      '--dangerously-skip-permissions',
+    ], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill('SIGTERM');
+    }, timeoutMs);
+
+    proc.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.on('close', (code: number | null) => {
+      clearTimeout(timer);
+      if (timedOut || (code !== null && code !== 0)) {
+        resolve('');
+        return;
+      }
+      resolve(stdout.trim());
+    });
+
+    proc.on('error', () => {
+      clearTimeout(timer);
+      resolve('');
+    });
+  });
 }

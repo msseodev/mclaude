@@ -149,11 +149,10 @@ class CycleEngineImpl {
       timestamp: new Date().toISOString(),
     });
 
-    // Scan codebase for SESSION-STATE.md context
+    // Scan codebase for SESSION-STATE.md context (LLM-powered summary)
     try {
       const scanner = new CodebaseScanner(project);
-      const summary = await scanner.scan();
-      this.codebaseSummaryCache = scanner.formatAsMarkdown(summary);
+      this.codebaseSummaryCache = await scanner.scan();
     } catch {
       this.codebaseSummaryCache = null;
     }

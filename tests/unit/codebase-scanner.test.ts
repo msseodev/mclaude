@@ -1,8 +1,22 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+
+// Mock child_process before importing the scanner
+vi.mock('child_process', () => ({
+  spawn: vi.fn(),
+  execFileSync: vi.fn(() => '/usr/bin/claude'),
+}));
+
+// Mock the db module
+vi.mock('../../src/lib/db', () => ({
+  getSetting: vi.fn(() => 'claude'),
+}));
+
 import { CodebaseScanner } from '../../src/lib/autonomous/codebase-scanner';
+import { spawn } from 'child_process';
+import { EventEmitter } from 'events';
 
 let tmpDir: string;
 
@@ -12,240 +26,250 @@ async function createFile(relativePath: string, content: string = ''): Promise<v
   await fs.writeFile(fullPath, content, 'utf-8');
 }
 
+function mockClaudeProcess(output: string, exitCode: number = 0): void {
+  const mockProc = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; killed: boolean; kill: () => void };
+  mockProc.stdout = new EventEmitter();
+  mockProc.stderr = new EventEmitter();
+  mockProc.killed = false;
+  mockProc.kill = vi.fn();
+
+  (spawn as ReturnType<typeof vi.fn>).mockReturnValue(mockProc);
+
+  // Emit output and close asynchronously
+  setTimeout(() => {
+    if (output) {
+      mockProc.stdout.emit('data', Buffer.from(output));
+    }
+    mockProc.emit('close', exitCode);
+  }, 10);
+}
+
+function mockClaudeProcessError(): void {
+  const mockProc = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; killed: boolean; kill: () => void };
+  mockProc.stdout = new EventEmitter();
+  mockProc.stderr = new EventEmitter();
+  mockProc.killed = false;
+  mockProc.kill = vi.fn();
+
+  (spawn as ReturnType<typeof vi.fn>).mockReturnValue(mockProc);
+
+  setTimeout(() => {
+    mockProc.emit('error', new Error('spawn ENOENT'));
+  }, 10);
+}
+
 describe('CodebaseScanner', () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codebase-scanner-test-'));
+    vi.clearAllMocks();
   });
 
   afterAll(async () => {
-    // Clean up all temp dirs (best effort)
     try {
       if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
     } catch { /* ignore */ }
   });
 
-  describe('detectProjectType', () => {
-    it('detects Next.js project from package.json', async () => {
+  describe('scan() with LLM success', () => {
+    it('returns LLM-generated markdown summary', async () => {
       await createFile('package.json', JSON.stringify({
         dependencies: { next: '14.0.0', react: '18.0.0' },
-      }));
-      const scanner = new CodebaseScanner(tmpDir);
-      const result = await scanner.detectProjectType();
-      expect(result).toBe('nextjs');
-    });
-
-    it('detects React-only project from package.json', async () => {
-      await createFile('package.json', JSON.stringify({
-        dependencies: { react: '18.0.0', 'react-dom': '18.0.0' },
-      }));
-      const scanner = new CodebaseScanner(tmpDir);
-      const result = await scanner.detectProjectType();
-      expect(result).toBe('react');
-    });
-
-    it('returns unknown when no package.json exists', async () => {
-      const scanner = new CodebaseScanner(tmpDir);
-      const result = await scanner.detectProjectType();
-      expect(result).toBe('unknown');
-    });
-
-    it('detects rust project from Cargo.toml', async () => {
-      await createFile('Cargo.toml', '[package]\nname = "myapp"');
-      const scanner = new CodebaseScanner(tmpDir);
-      const result = await scanner.detectProjectType();
-      expect(result).toBe('rust');
-    });
-
-    it('detects go project from go.mod', async () => {
-      await createFile('go.mod', 'module example.com/myapp');
-      const scanner = new CodebaseScanner(tmpDir);
-      const result = await scanner.detectProjectType();
-      expect(result).toBe('go');
-    });
-
-    it('detects python project from requirements.txt', async () => {
-      await createFile('requirements.txt', 'flask==2.0.0');
-      const scanner = new CodebaseScanner(tmpDir);
-      const result = await scanner.detectProjectType();
-      expect(result).toBe('python');
-    });
-
-    it('returns node for package.json with no known framework', async () => {
-      await createFile('package.json', JSON.stringify({
-        dependencies: { lodash: '4.0.0' },
-      }));
-      const scanner = new CodebaseScanner(tmpDir);
-      const result = await scanner.detectProjectType();
-      expect(result).toBe('node');
-    });
-  });
-
-  describe('scanRoutes', () => {
-    it('finds App Router routes with page.tsx files', async () => {
-      await createFile('src/app/page.tsx', 'export default function Home() {}');
-      await createFile('src/app/about/page.tsx', 'export default function About() {}');
-      await createFile('src/app/blog/[id]/page.tsx', 'export default function BlogPost() {}');
-
-      const scanner = new CodebaseScanner(tmpDir);
-      const routes = await scanner.scanRoutes();
-
-      expect(routes.length).toBeGreaterThanOrEqual(3);
-      expect(routes).toContainEqual(expect.stringContaining('/ (page.tsx)'));
-      expect(routes).toContainEqual(expect.stringContaining('/about (page.tsx)'));
-      expect(routes).toContainEqual(expect.stringContaining('/blog/[id] (page.tsx)'));
-    });
-
-    it('finds route.ts files', async () => {
-      await createFile('src/app/api/users/route.ts', 'export function GET() {}');
-
-      const scanner = new CodebaseScanner(tmpDir);
-      const routes = await scanner.scanRoutes();
-
-      expect(routes).toContainEqual(expect.stringContaining('/api/users (route.ts)'));
-    });
-
-    it('returns empty array when no routes exist', async () => {
-      const scanner = new CodebaseScanner(tmpDir);
-      const routes = await scanner.scanRoutes();
-      expect(routes).toEqual([]);
-    });
-
-    it('finds layout.tsx files', async () => {
-      await createFile('src/app/layout.tsx', 'export default function Layout() {}');
-      await createFile('src/app/page.tsx', 'export default function Home() {}');
-
-      const scanner = new CodebaseScanner(tmpDir);
-      const routes = await scanner.scanRoutes();
-
-      expect(routes).toContainEqual(expect.stringContaining('layout.tsx'));
-    });
-  });
-
-  describe('scanComponents', () => {
-    it('finds component files in src/components', async () => {
-      await createFile('src/components/Button.tsx', 'export function Button() {}');
-      await createFile('src/components/Modal.tsx', 'export function Modal() {}');
-      await createFile('src/components/ui/Badge.tsx', 'export function Badge() {}');
-
-      const scanner = new CodebaseScanner(tmpDir);
-      const components = await scanner.scanComponents();
-
-      expect(components.length).toBe(3);
-      expect(components).toContainEqual(expect.stringContaining('Button.tsx'));
-      expect(components).toContainEqual(expect.stringContaining('Modal.tsx'));
-      expect(components).toContainEqual(expect.stringContaining('Badge.tsx'));
-    });
-
-    it('returns empty array when no components directory exists', async () => {
-      const scanner = new CodebaseScanner(tmpDir);
-      const components = await scanner.scanComponents();
-      expect(components).toEqual([]);
-    });
-
-    it('returns relative paths from project root', async () => {
-      await createFile('src/components/Header.tsx', '');
-
-      const scanner = new CodebaseScanner(tmpDir);
-      const components = await scanner.scanComponents();
-
-      expect(components.length).toBe(1);
-      expect(components[0]).toBe(path.join('src', 'components', 'Header.tsx'));
-    });
-  });
-
-  describe('scanKeyFiles', () => {
-    it('finds standard config files', async () => {
-      await createFile('package.json', '{}');
-      await createFile('tsconfig.json', '{}');
-      await createFile('vitest.config.ts', '');
-
-      const scanner = new CodebaseScanner(tmpDir);
-      const keyFiles = await scanner.scanKeyFiles();
-
-      expect(keyFiles).toContain('package.json');
-      expect(keyFiles).toContain('tsconfig.json');
-      expect(keyFiles).toContain('vitest.config.ts');
-    });
-
-    it('returns empty array when no key files exist', async () => {
-      const scanner = new CodebaseScanner(tmpDir);
-      const keyFiles = await scanner.scanKeyFiles();
-      expect(keyFiles).toEqual([]);
-    });
-
-    it('does not include files not in the key files list', async () => {
-      await createFile('random-file.txt', '');
-      await createFile('package.json', '{}');
-
-      const scanner = new CodebaseScanner(tmpDir);
-      const keyFiles = await scanner.scanKeyFiles();
-
-      expect(keyFiles).toContain('package.json');
-      expect(keyFiles).not.toContain('random-file.txt');
-    });
-  });
-
-  describe('formatAsMarkdown', () => {
-    it('generates markdown with all sections', () => {
-      const scanner = new CodebaseScanner(tmpDir);
-      const md = scanner.formatAsMarkdown({
-        projectType: 'nextjs',
-        routeMap: ['/ (page.tsx)', '/about (page.tsx)'],
-        componentTree: ['src/components/Button.tsx', 'src/components/Modal.tsx'],
-        keyFiles: ['package.json', 'tsconfig.json'],
-        dependencies: { react: '18.0.0', next: '14.0.0' },
         scripts: { dev: 'next dev', build: 'next build' },
-      });
+      }));
 
-      expect(md).toContain('## Codebase Overview');
-      expect(md).toContain('**Project Type**: nextjs');
-      expect(md).toContain('### Route Map');
-      expect(md).toContain('- / (page.tsx)');
-      expect(md).toContain('- /about (page.tsx)');
-      expect(md).toContain('### Components');
-      expect(md).toContain('- src/components/Button.tsx');
-      expect(md).toContain('### Key Files');
-      expect(md).toContain('- package.json');
-      expect(md).toContain('### Dependencies');
-      expect(md).toContain('- react: 18.0.0');
-      expect(md).toContain('### Scripts');
-      expect(md).toContain('- `dev`: next dev');
-      expect(md).toContain('- `build`: next build');
+      const llmOutput = `## Codebase Overview
+- **Project Type**: Next.js 14 with React 18
+- **Tech Stack**: TypeScript, Next.js, React`;
+
+      mockClaudeProcess(llmOutput);
+
+      const scanner = new CodebaseScanner(tmpDir);
+      const result = await scanner.scan();
+
+      expect(result).toContain('## Codebase Overview');
+      expect(result).toContain('Next.js');
     });
 
-    it('omits empty sections', () => {
-      const scanner = new CodebaseScanner(tmpDir);
-      const md = scanner.formatAsMarkdown({
-        projectType: 'unknown',
-        routeMap: [],
-        componentTree: [],
-        keyFiles: [],
-        dependencies: {},
-        scripts: {},
-      });
+    it('passes gathered context to the LLM prompt', async () => {
+      await createFile('package.json', JSON.stringify({ name: 'test-project' }));
+      await createFile('README.md', 'This is a test project');
 
-      expect(md).toContain('## Codebase Overview');
-      expect(md).toContain('**Project Type**: unknown');
-      expect(md).not.toContain('### Route Map');
-      expect(md).not.toContain('### Components');
-      expect(md).not.toContain('### Key Files');
-      expect(md).not.toContain('### Dependencies');
-      expect(md).not.toContain('### Scripts');
+      mockClaudeProcess('## Codebase Overview\nTest project summary');
+
+      const scanner = new CodebaseScanner(tmpDir);
+      await scanner.scan();
+
+      // Verify spawn was called with a prompt containing context
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const spawnArgs = (spawn as ReturnType<typeof vi.fn>).mock.calls[0];
+      const promptArg = spawnArgs[1][1]; // args[1] is the prompt after '-p'
+      expect(promptArg).toContain('package.json');
+      expect(promptArg).toContain('README.md');
     });
 
-    it('shows truncation notice when route map is at max items', () => {
-      const scanner = new CodebaseScanner(tmpDir);
-      const routes = Array.from({ length: 30 }, (_, i) => `/route-${i} (page.tsx)`);
-      const md = scanner.formatAsMarkdown({
-        projectType: 'nextjs',
-        routeMap: routes,
-        componentTree: [],
-        keyFiles: [],
-        dependencies: {},
-        scripts: {},
-      });
+    it('uses haiku model', async () => {
+      mockClaudeProcess('## Codebase Overview\nSummary');
 
-      expect(md).toContain('truncated at 30 items');
+      const scanner = new CodebaseScanner(tmpDir);
+      await scanner.scan();
+
+      const spawnArgs = (spawn as ReturnType<typeof vi.fn>).mock.calls[0];
+      const args = spawnArgs[1] as string[];
+      const modelIndex = args.indexOf('--model');
+      expect(modelIndex).toBeGreaterThan(-1);
+      expect(args[modelIndex + 1]).toBe('haiku');
+    });
+  });
+
+  describe('scan() with LLM failure (fallback)', () => {
+    it('returns fallback summary when LLM process exits with error', async () => {
+      await createFile('package.json', JSON.stringify({ name: 'my-project' }));
+      await createFile('Cargo.toml', '[package]\nname = "myapp"');
+
+      mockClaudeProcess('', 1);
+
+      const scanner = new CodebaseScanner(tmpDir);
+      const result = await scanner.scan();
+
+      expect(result).toContain('## Codebase Overview');
+      expect(result).toContain('LLM summary unavailable');
+      expect(result).toContain('package.json');
+      expect(result).toContain('Cargo.toml');
+    });
+
+    it('returns fallback summary when LLM process errors', async () => {
+      await createFile('go.mod', 'module example.com/myapp');
+
+      mockClaudeProcessError();
+
+      const scanner = new CodebaseScanner(tmpDir);
+      const result = await scanner.scan();
+
+      expect(result).toContain('## Codebase Overview');
+      expect(result).toContain('LLM summary unavailable');
+    });
+
+    it('returns fallback summary when LLM returns empty output', async () => {
+      await createFile('pubspec.yaml', 'name: my_app');
+
+      mockClaudeProcess('');
+
+      const scanner = new CodebaseScanner(tmpDir);
+      const result = await scanner.scan();
+
+      expect(result).toContain('## Codebase Overview');
+      expect(result).toContain('LLM summary unavailable');
+      expect(result).toContain('pubspec.yaml');
+    });
+
+    it('lists source directories in fallback', async () => {
+      await createFile('src/main.ts', '');
+      await createFile('lib/utils.dart', '');
+
+      mockClaudeProcess('', 1);
+
+      const scanner = new CodebaseScanner(tmpDir);
+      const result = await scanner.scan();
+
+      expect(result).toContain('Source Directories');
+      expect(result).toContain('src/');
+      expect(result).toContain('lib/');
+    });
+  });
+
+  describe('context gathering', () => {
+    it('reads config files when they exist', async () => {
+      await createFile('package.json', JSON.stringify({ name: 'test' }));
+      await createFile('tsconfig.json', '{}');
+      await createFile('Makefile', 'all: build');
+
+      const llmOutput = '## Codebase Overview\nSummary';
+      mockClaudeProcess(llmOutput);
+
+      const scanner = new CodebaseScanner(tmpDir);
+      await scanner.scan();
+
+      const spawnArgs = (spawn as ReturnType<typeof vi.fn>).mock.calls[0];
+      const promptArg = spawnArgs[1][1] as string;
+      expect(promptArg).toContain('package.json');
+      expect(promptArg).toContain('tsconfig.json');
+      expect(promptArg).toContain('Makefile');
+      expect(promptArg).toContain('"name":"test"');
+    });
+
+    it('reads README.md first 100 lines', async () => {
+      const lines = Array.from({ length: 150 }, (_, i) => `Line ${i + 1}`);
+      await createFile('README.md', lines.join('\n'));
+
+      mockClaudeProcess('## Codebase Overview\nSummary');
+
+      const scanner = new CodebaseScanner(tmpDir);
+      await scanner.scan();
+
+      const spawnArgs = (spawn as ReturnType<typeof vi.fn>).mock.calls[0];
+      const promptArg = spawnArgs[1][1] as string;
+      expect(promptArg).toContain('Line 1');
+      expect(promptArg).toContain('Line 100');
+      expect(promptArg).not.toContain('Line 101');
+    });
+
+    it('reads CLAUDE.md when it exists', async () => {
+      await createFile('CLAUDE.md', '# My Project\nBuild with npm run build');
+
+      mockClaudeProcess('## Codebase Overview\nSummary');
+
+      const scanner = new CodebaseScanner(tmpDir);
+      await scanner.scan();
+
+      const spawnArgs = (spawn as ReturnType<typeof vi.fn>).mock.calls[0];
+      const promptArg = spawnArgs[1][1] as string;
+      expect(promptArg).toContain('CLAUDE.md');
+      expect(promptArg).toContain('Build with npm run build');
+    });
+
+    it('lists source directory contents (1 level deep)', async () => {
+      await createFile('src/components/Button.tsx', '');
+      await createFile('src/lib/utils.ts', '');
+      await createFile('src/app.ts', '');
+
+      mockClaudeProcess('## Codebase Overview\nSummary');
+
+      const scanner = new CodebaseScanner(tmpDir);
+      await scanner.scan();
+
+      const spawnArgs = (spawn as ReturnType<typeof vi.fn>).mock.calls[0];
+      const promptArg = spawnArgs[1][1] as string;
+      expect(promptArg).toContain('src/');
+      expect(promptArg).toContain('components/');
+      expect(promptArg).toContain('lib/');
+      expect(promptArg).toContain('app.ts');
+    });
+
+    it('filters hidden files from root listing', async () => {
+      await createFile('.git/HEAD', 'ref: refs/heads/main');
+      await createFile('.hidden', '');
+      await createFile('visible.txt', '');
+      await createFile('.env.example', 'KEY=value');
+
+      mockClaudeProcess('## Codebase Overview\nSummary');
+
+      const scanner = new CodebaseScanner(tmpDir);
+      await scanner.scan();
+
+      const spawnArgs = (spawn as ReturnType<typeof vi.fn>).mock.calls[0];
+      const promptArg = spawnArgs[1][1] as string;
+      expect(promptArg).toContain('visible.txt');
+      expect(promptArg).toContain('.env.example');
+      expect(promptArg).not.toContain('.git');
+      expect(promptArg).not.toContain('.hidden');
+    });
+  });
+
+  describe('formatAsMarkdown (backward compatibility)', () => {
+    it('passes through the markdown string', () => {
+      const scanner = new CodebaseScanner(tmpDir);
+      const input = '## Codebase Overview\nSome content';
+      expect(scanner.formatAsMarkdown(input)).toBe(input);
     });
   });
 });
