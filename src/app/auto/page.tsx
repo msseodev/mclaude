@@ -573,6 +573,7 @@ function StartAutoModal({
       open={open}
       onClose={onClose}
       title="Start Autonomous Mode"
+      size="lg"
     >
       {open && (
         <StartAutoModalContent onClose={onClose} onStart={onStart} loading={loading} />
@@ -681,6 +682,7 @@ function ResumeAutoModal({
       open={open}
       onClose={onClose}
       title="Resume Autonomous Mode"
+      size="lg"
     >
       {open && (
         <ResumeAutoModalContent
@@ -800,6 +802,7 @@ function AddPromptModal({
       open={open}
       onClose={onClose}
       title="Add Prompt"
+      size="lg"
     >
       {open && (
         <AddPromptModalContent onClose={onClose} onAdd={onAdd} />

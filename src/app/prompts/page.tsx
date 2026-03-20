@@ -326,6 +326,7 @@ export default function PromptsPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         title={editingId ? 'Edit Prompt' : 'Add Prompt'}
+        size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setModalOpen(false)}>
@@ -389,6 +390,7 @@ export default function PromptsPage() {
         open={deleteConfirm !== null}
         onClose={() => setDeleteConfirm(null)}
         title="Delete Prompt"
+        size="sm"
         footer={
           <>
             <Button variant="secondary" onClick={() => setDeleteConfirm(null)}>

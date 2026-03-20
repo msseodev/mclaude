@@ -151,6 +151,7 @@ export default function HistoryPage() {
         open={selectedId !== null}
         onClose={closeDetail}
         title="Execution Detail"
+        size="xl"
         footer={
           <Button variant="secondary" onClick={closeDetail}>
             Close

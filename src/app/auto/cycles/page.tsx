@@ -338,6 +338,7 @@ export default function CyclesPage() {
         open={selectedCycle !== null}
         onClose={() => setSelectedCycle(null)}
         title="Cycle Detail"
+        size="xl"
         footer={
           <Button
             variant="secondary"
@@ -443,6 +444,7 @@ export default function CyclesPage() {
           setSelectedAgentRun(null);
           setAgentRunDetail(null);
         }}
+        size="xl"
         title={
           selectedAgentRun
             ? `${selectedAgentRun.agent_name} - Iteration ${selectedAgentRun.iteration}`

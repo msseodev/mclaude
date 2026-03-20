@@ -198,6 +198,7 @@ export default function PlansPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         title="Create Plan"
+        size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setModalOpen(false)}>
@@ -245,6 +246,7 @@ export default function PlansPage() {
         open={deleteConfirm !== null}
         onClose={() => setDeleteConfirm(null)}
         title="Delete Plan"
+        size="sm"
         footer={
           <>
             <Button variant="secondary" onClick={() => setDeleteConfirm(null)}>

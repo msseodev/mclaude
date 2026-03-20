@@ -328,6 +328,7 @@ export default function PlanDetailPage() {
         open={addModalOpen}
         onClose={() => setAddModalOpen(false)}
         title="Add Prompt to Plan"
+        size="lg"
       >
         {prompts.length === 0 ? (
           <p className="text-sm text-gray-500">
@@ -356,6 +357,7 @@ export default function PlanDetailPage() {
         open={editModalOpen}
         onClose={() => setEditModalOpen(false)}
         title="Edit Plan"
+        size="lg"
         footer={
           <>
             <Button variant="secondary" onClick={() => setEditModalOpen(false)}>

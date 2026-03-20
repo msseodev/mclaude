@@ -315,6 +315,7 @@ export default function FindingsPage() {
         open={selectedFinding !== null}
         onClose={() => setSelectedFinding(null)}
         title="Finding Detail"
+        size="xl"
         footer={
           <Button
             variant="secondary"
