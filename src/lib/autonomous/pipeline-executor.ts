@@ -22,6 +22,7 @@ import type {
   AutoFinding,
   AutoSSEEvent,
   AutoAgentRun,
+  PipelineType,
 } from './types';
 import type { SSEEvent, RateLimitInfo } from '../types';
 
@@ -32,6 +33,7 @@ export interface PipelineResult {
   totalCostUsd: number;
   totalDurationMs: number;
   qaResult?: { passed: boolean; testOutput: string };
+  blockerInfo?: { agentName: string; reason: string };
   abortedByRateLimit?: boolean;
   rateLimitInfo?: RateLimitInfo;
 }
@@ -77,6 +79,7 @@ export class PipelineExecutor {
     private cycleNumber: number,
     private emit: (event: AutoSSEEvent) => void,
     private finding?: AutoFinding | null,
+    private pipelineType?: PipelineType,
   ) {}
 
   getActivityInfo(): {
@@ -98,12 +101,7 @@ export class PipelineExecutor {
   async execute(): Promise<PipelineResult> {
     const settings = getAllAutoSettings();
     const enabledAgents = getAutoAgents(true);
-
-    // Skip planners (not moderator) for fix cycles if configured
-    const skipPlannerNames = new Set(['product_designer', 'ux_planner', 'tech_planner', 'biz_planner']);
-    const agents = (this.finding && settings.skip_designer_for_fixes)
-      ? enabledAgents.filter(a => !skipPlannerNames.has(a.name))
-      : enabledAgents;
+    const agents = this.filterAgentsByPipelineType(enabledAgents);
 
     const userPrompts = getAutoUserPrompts(this.session.id);
     const userPromptText = buildUserPrompt(this.session, userPrompts, this.cycleNumber);
@@ -122,6 +120,7 @@ export class PipelineExecutor {
     const allAgentRuns: AutoAgentRun[] = [];
     let totalCostUsd = 0;
     let totalDurationMs = 0;
+    let blockerInfo: PipelineResult['blockerInfo'];
 
     // Fetch existing CEO requests for context
     const ceoRequests = getCEORequests(this.session.id);
@@ -346,14 +345,18 @@ export class PipelineExecutor {
         });
 
         // Developer -> feedback loop (Planning Moderator or Product Designer)
-        if (agent.name === 'developer' && result.agentRun.status === 'completed') {
+        if ((agent.name === 'developer' || agent.name === 'test_engineer') && result.agentRun.status === 'completed') {
           const devParsed = parseDeveloperOutput(result.agentRun.output);
           if (devParsed.blocked) {
             // Find the moderator first, fall back to designer
             const feedbackTarget = agents.find(a => a.name === 'planning_moderator')
               || agents.find(a => a.name === 'product_designer');
 
-            if (feedbackTarget) {
+            if (!feedbackTarget) {
+              // No feedback target in this pipeline (e.g. test_fix has no planners).
+              // Record the blocker so the cycle engine can create an appropriate finding.
+              blockerInfo = { agentName: agent.name, reason: devParsed.blockerReason };
+            } else {
               // Emit planning_dev_review SSE event
               this.emit({
                 type: 'planning_dev_review',
@@ -364,9 +367,10 @@ export class PipelineExecutor {
                 timestamp: new Date().toISOString(),
               });
 
+              const implementer = agents.find(a => a.name === agent.name)!;
               const loopResult = await this.feedbackLoop(
                 feedbackTarget,
-                agents.find(a => a.name === 'developer')!,
+                implementer,
                 settings.max_designer_iterations,
                 userPromptText,
                 stateContext,
@@ -380,7 +384,7 @@ export class PipelineExecutor {
               totalDurationMs += loopResult.additionalDuration;
 
               if (loopResult.latestDeveloperOutput) {
-                previousOutputs.set('Developer', loopResult.latestDeveloperOutput);
+                previousOutputs.set(agent.display_name, loopResult.latestDeveloperOutput);
               }
 
               // Merge updated structured outputs
@@ -457,6 +461,7 @@ export class PipelineExecutor {
       totalCostUsd,
       totalDurationMs,
       qaResult,
+      blockerInfo,
     };
   }
 
@@ -492,6 +497,12 @@ export class PipelineExecutor {
     // Sort all steps by order
     steps.sort((a, b) => a.order - b.order);
     return steps;
+  }
+
+  // Pipeline type system supersedes the old skip_designer_for_fixes setting.
+  // The fix and test_fix pipeline types implicitly skip planners/designers.
+  private filterAgentsByPipelineType(enabledAgents: AutoAgent[]): AutoAgent[] {
+    return filterAgentsByPipelineType(enabledAgents, this.pipelineType);
   }
 
   private async runSingleAgent(
@@ -852,6 +863,32 @@ export class PipelineExecutor {
       this.currentExecutor.kill();
       this.currentExecutor = null;
     }
+  }
+}
+
+// --- Exported helpers (also used by tests) ---
+
+/**
+ * Filter agents based on pipeline type.
+ * Pipeline type system supersedes the old skip_designer_for_fixes setting.
+ */
+export function filterAgentsByPipelineType(
+  enabledAgents: AutoAgent[],
+  pipelineType?: PipelineType,
+): AutoAgent[] {
+  const effectiveType = pipelineType ?? 'discovery';
+  switch (effectiveType) {
+    case 'fix': {
+      const fixNames = new Set(['developer', 'reviewer', 'qa_engineer']);
+      return enabledAgents.filter(a => fixNames.has(a.name));
+    }
+    case 'test_fix': {
+      const testFixNames = new Set(['test_engineer', 'qa_engineer']);
+      return enabledAgents.filter(a => testFixNames.has(a.name));
+    }
+    case 'discovery':
+    default:
+      return enabledAgents.filter(a => a.name !== 'test_engineer');
   }
 }
 

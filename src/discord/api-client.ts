@@ -3,6 +3,7 @@ export class MclaudeApiClient {
 
   private async get(path: string) { return this.request('GET', path); }
   private async post(path: string, body?: unknown) { return this.request('POST', path, body); }
+  private async patch(path: string, body?: unknown) { return this.request('PATCH', path, body); }
   private async delete(path: string) { return this.request('DELETE', path); }
 
   getBaseUrl(): string { return this.baseUrl; }
@@ -61,5 +62,10 @@ export class MclaudeApiClient {
   }
   async stopChatResponse(): Promise<{ ok: boolean }> {
     return this.delete('/api/chat');
+  }
+
+  // CEO requests
+  async respondToCEORequest(requestId: string, status: string, response: string): Promise<void> {
+    await this.patch(`/api/auto/report/requests/${requestId}`, { status, response });
   }
 }

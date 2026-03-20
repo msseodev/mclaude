@@ -12,6 +12,7 @@ import {
   buildCycleFailedEmbed,
   buildAutoSessionCompleteEmbed,
   buildAutoSessionStoppedEmbed,
+  buildCEORequestEmbed,
   buildRunActionRow,
   buildRateLimitActionRow,
   buildQueueCompleteActionRow,
@@ -38,6 +39,9 @@ const SKIP_EVENT_TYPES = new Set([
   'review_iteration',
   'user_prompt_added',
 ]);
+
+// Map Discord thread ID -> CEO request ID for thread-based replies
+export const ceoRequestThreadMap = new Map<string, string>();
 
 // AbortController per stream for clean shutdown
 const abortControllers = new Map<string, AbortController>();
@@ -355,6 +359,38 @@ async function handleAutoEvent(
         await channel.send({ embeds: [embed] });
       }
       // Skip running/paused/pause_scheduled status updates (too noisy)
+      break;
+    }
+
+    case 'ceo_request_created': {
+      const request = (eventData.request as Record<string, unknown>) || eventData;
+      const requestId = String(request.id || '');
+      if (!requestId) {
+        console.error('[notifications] CEO request event missing id, skipping');
+        break;
+      }
+      const embed = buildCEORequestEmbed({
+        id: requestId,
+        title: String(request.title || 'Untitled Request'),
+        description: String(request.description || ''),
+        type: String(request.type || 'unknown'),
+        from_agent: String(request.from_agent || 'unknown'),
+        blocking: Boolean(request.blocking),
+      });
+
+      const message = await channel.send({ embeds: [embed] });
+      const thread = await message.startThread({
+        name: `CEO: ${String(request.title || 'Request').slice(0, 90)}`,
+        autoArchiveDuration: 1440,
+      });
+      ceoRequestThreadMap.set(thread.id, requestId);
+      await thread.send(
+        '이 쓰레드에 답장하여 CEO 요청에 응답하세요.\n' +
+        '- **승인** (approve): 첫 줄에 "승인" 또는 "approve"\n' +
+        '- **거절** (reject): 첫 줄에 "거절" 또는 "reject"\n' +
+        '- **답변** (answer): 그 외 모든 응답\n\n' +
+        '첫 번째 응답만 반영됩니다.',
+      );
       break;
     }
   }

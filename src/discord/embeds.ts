@@ -258,6 +258,35 @@ export function buildAutoSessionStoppedEmbed(data: {
 }
 
 // ---------------------------------------------------------------------------
+// CEO request embeds
+// ---------------------------------------------------------------------------
+
+export function buildCEORequestEmbed(data: {
+  id: string;
+  title: string;
+  description: string;
+  type: string;
+  from_agent: string;
+  blocking: boolean;
+}): EmbedBuilder {
+  const color = data.blocking ? COLORS.error : COLORS.warning;
+
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`CEO Request: ${data.title}`)
+    .setDescription(data.description)
+    .addFields(
+      { name: 'Type', value: data.type, inline: true },
+      { name: 'From Agent', value: data.from_agent, inline: true },
+      { name: 'Blocking', value: data.blocking ? 'Yes' : 'No', inline: true },
+    )
+    .setFooter({
+      text: '이 쓰레드에 답장하세요. 첫 줄에 승인/거절/답변 중 하나를 쓰고, 나머지는 응답 내용입니다.',
+    })
+    .setTimestamp();
+}
+
+// ---------------------------------------------------------------------------
 // Button action rows
 // ---------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { parseReviewOutput, parseQAOutput, parseDeveloperOutput } from '../../src/lib/autonomous/pipeline-executor';
-import type { AutoAgentRun } from '../../src/lib/autonomous/types';
+import { parseReviewOutput, parseQAOutput, parseDeveloperOutput, filterAgentsByPipelineType } from '../../src/lib/autonomous/pipeline-executor';
+import type { AutoAgent, AutoAgentRun } from '../../src/lib/autonomous/types';
 
 // Mock dependencies for PipelineExecutor.execute() tests
 vi.mock('../../src/lib/autonomous/db', () => ({
@@ -284,5 +284,62 @@ describe('PipelineExecutor.execute - success determination', () => {
     expect(result.success).toBe(false);
     expect(result.agentRuns).toHaveLength(2);
     expect(result.agentRuns.every(r => r.status === 'failed')).toBe(true);
+  });
+});
+
+describe('filterAgentsByPipelineType', () => {
+  const makeAgent = (name: string, order: number): AutoAgent => ({
+    id: `agent-${name}`,
+    name,
+    display_name: name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, ' '),
+    role_description: '',
+    system_prompt: '',
+    model: 'sonnet',
+    pipeline_order: order,
+    parallel_group: null,
+    enabled: 1,
+    is_builtin: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
+  const allAgents: AutoAgent[] = [
+    makeAgent('product_designer', 0.5),
+    makeAgent('planning_moderator', 0.6),
+    makeAgent('developer', 1.0),
+    makeAgent('test_engineer', 1.0),
+    makeAgent('reviewer', 2.0),
+    makeAgent('qa_engineer', 3.0),
+  ];
+
+  it('discovery pipeline filters out test_engineer', () => {
+    const result = filterAgentsByPipelineType(allAgents, 'discovery');
+    const names = result.map(a => a.name);
+    expect(names).toContain('product_designer');
+    expect(names).toContain('planning_moderator');
+    expect(names).toContain('developer');
+    expect(names).toContain('reviewer');
+    expect(names).toContain('qa_engineer');
+    expect(names).not.toContain('test_engineer');
+  });
+
+  it('fix pipeline returns only developer, reviewer, qa_engineer', () => {
+    const result = filterAgentsByPipelineType(allAgents, 'fix');
+    const names = result.map(a => a.name);
+    expect(names).toEqual(['developer', 'reviewer', 'qa_engineer']);
+  });
+
+  it('test_fix pipeline returns only test_engineer, qa_engineer', () => {
+    const result = filterAgentsByPipelineType(allAgents, 'test_fix');
+    const names = result.map(a => a.name);
+    expect(names).toEqual(['test_engineer', 'qa_engineer']);
+  });
+
+  it('default (undefined) behaves like discovery', () => {
+    const result = filterAgentsByPipelineType(allAgents, undefined);
+    const names = result.map(a => a.name);
+    expect(names).toContain('developer');
+    expect(names).toContain('product_designer');
+    expect(names).not.toContain('test_engineer');
   });
 });

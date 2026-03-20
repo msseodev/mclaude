@@ -47,6 +47,7 @@ import type {
   AutoPhase,
   AutoCycleStatus,
   FailureHistoryEntry,
+  PipelineType,
 } from './types';
 import type { SSEEvent, RateLimitInfo } from '../types';
 
@@ -571,6 +572,13 @@ class CycleEngineImpl {
     this.executor.execute(prompt, session.target_project);
   }
 
+  private determinePipelineType(finding: { category: string } | null | undefined): PipelineType {
+    if (!finding) return 'discovery';
+    if (finding.category === 'test_failure') return 'test_fix';
+    if (finding.category === 'bug') return 'fix';
+    return 'discovery'; // improvement, idea, etc. benefit from planning
+  }
+
   private async _processNextCyclePipeline(session: NonNullable<ReturnType<typeof getAutoSession>>): Promise<void> {
     if (!this.currentSessionId) return;
 
@@ -587,6 +595,8 @@ class CycleEngineImpl {
       updateAutoFinding(findingToFix.id, { status: 'in_progress' });
       this.currentFindingId = findingToFix.id;
     }
+
+    const pipelineType = this.determinePipelineType(findingToFix);
 
     // Git checkpoint
     let gitCheckpoint: string | null = null;
@@ -615,6 +625,7 @@ class CycleEngineImpl {
         cycleNumber: this.cycleNumber,
         phase: 'pipeline',
         findingId: findingToFix?.id ?? null,
+        pipelineType,
       },
       timestamp: new Date().toISOString(),
     });
@@ -626,6 +637,7 @@ class CycleEngineImpl {
       this.cycleNumber,
       this.emit.bind(this),
       findingToFix,
+      pipelineType,
     );
 
     // Start watchdog to detect stuck cycles
@@ -702,14 +714,38 @@ class CycleEngineImpl {
       }
     }
 
-    // Handle QA failure — create finding for failed tests (no rollback in v2)
+    // Handle QA failure — reuse existing open test_failure finding or create one
     if (result.qaResult && !result.qaResult.passed) {
-      createAutoFinding({
+      const existingTestFailure = getAutoFindings({
         session_id: this.currentSessionId,
         category: 'test_failure',
+        status: 'open',
+      }, 1).find(f => f.title === 'QA tests failed in pipeline cycle');
+
+      if (existingTestFailure) {
+        updateAutoFinding(existingTestFailure.id, {
+          description: result.qaResult.testOutput.slice(0, 2000),
+        });
+      } else {
+        createAutoFinding({
+          session_id: this.currentSessionId,
+          category: 'test_failure',
+          priority: 'P0',
+          title: 'QA tests failed in pipeline cycle',
+          description: result.qaResult.testOutput.slice(0, 2000),
+        });
+      }
+    }
+
+    // Handle blocker from agents without a feedback target (e.g. test_engineer in test_fix pipeline).
+    // Create a bug finding so the next cycle uses the fix pipeline with a developer.
+    if (result.blockerInfo) {
+      createAutoFinding({
+        session_id: this.currentSessionId,
+        category: 'bug',
         priority: 'P0',
-        title: 'QA tests failed in pipeline cycle',
-        description: result.qaResult.testOutput.slice(0, 2000),
+        title: `Blocker from ${result.blockerInfo.agentName}: ${result.blockerInfo.reason.slice(0, 100)}`,
+        description: result.blockerInfo.reason.slice(0, 2000),
       });
     }
 
@@ -1307,7 +1343,7 @@ export function buildCycleDoc(
 
   lines.push('', '## Agent Results', '');
 
-  const agentNames = ['UX Planner', 'Tech Planner', 'Biz Planner', 'Planning Moderator', 'Product Designer', 'Developer', 'Reviewer', 'QA Engineer'];
+  const agentNames = ['UX Planner', 'Tech Planner', 'Biz Planner', 'Planning Moderator', 'Product Designer', 'Developer', 'Test Engineer', 'Reviewer', 'QA Engineer'];
   const runsByName = new Map(result.agentRuns.map(r => [r.agent_name, r]));
 
   for (const name of agentNames) {

@@ -6,6 +6,7 @@ export type FindingCategory = 'bug' | 'improvement' | 'idea' | 'test_failure' | 
 export type FindingPriority = 'P0' | 'P1' | 'P2' | 'P3';
 export type FindingStatus = 'open' | 'in_progress' | 'resolved' | 'wont_fix' | 'duplicate';
 export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'skipped';
+export type PipelineType = 'discovery' | 'fix' | 'test_fix';
 export type PromptVariantStatus = 'active' | 'evaluating' | 'retired' | 'original';
 export type CEORequestType = 'permission' | 'resource' | 'decision' | 'information';
 export type CEORequestStatus = 'pending' | 'approved' | 'rejected' | 'answered';

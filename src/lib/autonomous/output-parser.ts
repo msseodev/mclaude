@@ -90,6 +90,14 @@ function generateSummary(
     return summarizeQA(structuredData, rawOutput);
   }
 
+  // Test Engineer (same handling as Developer — free-form output)
+  if (nameLower === 'test_engineer' || nameLower === 'test engineer') {
+    if (rawOutput.length <= 1000) {
+      return rawOutput;
+    }
+    return rawOutput.slice(0, 1000) + '...';
+  }
+
   // Default (Developer, etc.)
   if (rawOutput.length <= 1000) {
     return rawOutput;
