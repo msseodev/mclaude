@@ -575,8 +575,7 @@ class CycleEngineImpl {
   private determinePipelineType(finding: { category: string } | null | undefined): PipelineType {
     if (!finding) return 'discovery';
     if (finding.category === 'test_failure') return 'test_fix';
-    if (finding.category === 'bug') return 'fix';
-    return 'discovery'; // improvement, idea, etc. benefit from planning
+    return 'fix';
   }
 
   private async _processNextCyclePipeline(session: NonNullable<ReturnType<typeof getAutoSession>>): Promise<void> {
