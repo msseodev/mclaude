@@ -135,7 +135,7 @@ export default function AutoSettingsPage() {
 
           <div>
             <label htmlFor="auto-build-command" className="mb-1 block text-sm font-medium text-gray-700">
-              빌드 명령어
+              Build Command
             </label>
             <input
               id="auto-build-command"
@@ -148,13 +148,13 @@ export default function AutoSettingsPage() {
               placeholder="e.g., ./gradlew build, flutter build, cargo build"
             />
             <p className="mt-1 text-xs text-gray-500">
-              비어있으면 건너뜁니다
+              Leave empty to skip
             </p>
           </div>
 
           <div>
             <label htmlFor="auto-lint-command" className="mb-1 block text-sm font-medium text-gray-700">
-              린트 명령어
+              Lint Command
             </label>
             <input
               id="auto-lint-command"
@@ -167,13 +167,13 @@ export default function AutoSettingsPage() {
               placeholder="e.g., ./gradlew lint, flutter analyze, cargo clippy"
             />
             <p className="mt-1 text-xs text-gray-500">
-              비어있으면 건너뜁니다
+              Leave empty to skip
             </p>
           </div>
 
           <div>
             <label htmlFor="auto-screenshot-dir" className="mb-1 block text-sm font-medium text-gray-700">
-              스크린샷 경로
+              Screenshot Directory
             </label>
             <input
               id="auto-screenshot-dir"
@@ -183,10 +183,10 @@ export default function AutoSettingsPage() {
                 setForm({ ...form, screenshot_dir: e.target.value })
               }
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="비워두면 자동 감지 (.mclaude/screenshots/)"
+              placeholder="Leave empty for auto-detect (.mclaude/screenshots/)"
             />
             <p className="mt-1 text-xs text-gray-500">
-              비어있으면 자동 감지합니다
+              Leave empty for auto-detection
             </p>
           </div>
 
@@ -202,10 +202,10 @@ export default function AutoSettingsPage() {
               }
               rows={4}
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="모든 에이전트에 공통으로 전달되는 지시사항..."
+              placeholder="Instructions shared across all agents..."
             />
             <p className="mt-1 text-xs text-gray-500">
-              모든 에이전트(Planner, Developer, Reviewer, QA 등)의 system prompt 뒤에 주입됩니다
+              Injected after the system prompt of all agents (Planner, Developer, Reviewer, QA, etc.)
             </p>
           </div>
 
@@ -408,7 +408,7 @@ export default function AutoSettingsPage() {
               className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
             />
             <label htmlFor="auto-evolution-enabled" className="text-sm font-medium text-gray-700">
-              프롬프트 진화
+              Prompt Evolution
             </label>
           </div>
 
@@ -416,7 +416,7 @@ export default function AutoSettingsPage() {
             <>
               <div>
                 <label htmlFor="auto-evolution-interval" className="mb-1 block text-sm font-medium text-gray-700">
-                  진화 주기 (사이클)
+                  Evolution Interval (cycles)
                 </label>
                 <input
                   id="auto-evolution-interval"
@@ -427,13 +427,13 @@ export default function AutoSettingsPage() {
                   className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  N 사이클마다 프롬프트 진화를 평가합니다
+                  Evaluate prompt evolution every N cycles
                 </p>
               </div>
 
               <div>
                 <label htmlFor="auto-evolution-window" className="mb-1 block text-sm font-medium text-gray-700">
-                  평가 윈도우 (사이클)
+                  Evaluation Window (cycles)
                 </label>
                 <input
                   id="auto-evolution-window"
@@ -444,7 +444,7 @@ export default function AutoSettingsPage() {
                   className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  성과를 평가할 최근 사이클 수
+                  Number of recent cycles to evaluate performance
                 </p>
               </div>
             </>

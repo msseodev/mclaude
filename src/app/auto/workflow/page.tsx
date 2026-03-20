@@ -96,29 +96,29 @@ function getAgentCardBorder(agent: WorkflowAgent): string {
 
 function getPhaseLabel(step: WorkflowStep, index: number): string {
   if (step.type === 'parallel') {
-    return `Phase ${index + 1}: 병렬 기획`;
+    return `Phase ${index + 1}: Parallel Planning`;
   }
   const name = step.agents[0]?.name;
   switch (name) {
-    case 'planning_moderator': return `Phase ${index + 1}: 기획 리뷰 회의`;
-    case 'developer': return `Phase ${index + 1}: 개발`;
-    case 'reviewer': return `Phase ${index + 1}: 리뷰`;
+    case 'planning_moderator': return `Phase ${index + 1}: Planning Review`;
+    case 'developer': return `Phase ${index + 1}: Development`;
+    case 'reviewer': return `Phase ${index + 1}: Review`;
     case 'qa_engineer': return `Phase ${index + 1}: QA`;
     default: return `Phase ${index + 1}: ${step.agents[0]?.displayName ?? ''}`;
   }
 }
 
-// --- Korean display name map ---
+// --- Display name map ---
 
-const agentKoreanName: Record<string, string> = {
-  ux_planner: 'UX 기획자',
-  tech_planner: '기술 기획자',
-  biz_planner: '비즈 기획자',
-  planning_moderator: '기획 모더레이터',
-  developer: '개발자',
-  reviewer: '리뷰어',
-  qa_engineer: 'QA 엔지니어',
-  product_designer: '프로덕트 디자이너',
+const agentDisplayName: Record<string, string> = {
+  ux_planner: 'UX Planner',
+  tech_planner: 'Tech Planner',
+  biz_planner: 'Biz Planner',
+  planning_moderator: 'Planning Moderator',
+  developer: 'Developer',
+  reviewer: 'Reviewer',
+  qa_engineer: 'QA Engineer',
+  product_designer: 'Product Designer',
 };
 
 // --- Main page component ---
@@ -132,13 +132,13 @@ export default function AutoWorkflowPage() {
     try {
       const res = await fetch('/api/auto/workflow');
       if (!res.ok) {
-        throw new Error('워크플로우 데이터를 불러오지 못했습니다.');
+        throw new Error('Failed to load workflow data.');
       }
       const json: WorkflowData = await res.json();
       setData(json);
       setError(null);
     } catch {
-      setError('워크플로우 데이터를 불러오지 못했습니다.');
+      setError('Failed to load workflow data.');
     } finally {
       setLoading(false);
     }
@@ -151,8 +151,8 @@ export default function AutoWorkflowPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-900 p-6">
-        <h1 className="mb-6 text-2xl font-bold text-zinc-100">워크플로우 다이어그램</h1>
-        <p className="text-sm text-zinc-500">불러오는 중...</p>
+        <h1 className="mb-6 text-2xl font-bold text-zinc-100">Workflow Diagram</h1>
+        <p className="text-sm text-zinc-500">Loading...</p>
       </div>
     );
   }
@@ -160,14 +160,14 @@ export default function AutoWorkflowPage() {
   if (error || !data) {
     return (
       <div className="min-h-screen bg-zinc-900 p-6">
-        <h1 className="mb-6 text-2xl font-bold text-zinc-100">워크플로우 다이어그램</h1>
+        <h1 className="mb-6 text-2xl font-bold text-zinc-100">Workflow Diagram</h1>
         <div className="rounded-lg border border-zinc-700 bg-zinc-800 p-8 text-center">
-          <p className="text-zinc-400">{error ?? '데이터가 없습니다.'}</p>
+          <p className="text-zinc-400">{error ?? 'No data available.'}</p>
           <button
             onClick={fetchWorkflow}
             className="mt-3 text-sm font-medium text-blue-400 hover:text-blue-300 underline"
           >
-            재시도
+            Retry
           </button>
         </div>
       </div>
@@ -184,9 +184,9 @@ export default function AutoWorkflowPage() {
     <div className="min-h-screen bg-zinc-900 p-6">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-zinc-100">워크플로우 다이어그램</h1>
+        <h1 className="text-2xl font-bold text-zinc-100">Workflow Diagram</h1>
         <p className="mt-1 text-sm text-zinc-500">
-          에이전트 파이프라인 실행 순서와 피드백 루프를 시각적으로 보여줍니다.
+          Visual representation of the agent pipeline execution order and feedback loops.
         </p>
       </div>
 
@@ -260,7 +260,7 @@ export default function AutoWorkflowPage() {
 
         {/* CEO Escalation */}
         <div className="rounded-lg border border-red-500/30 bg-red-950/20 p-5">
-          <h3 className="mb-3 text-sm font-semibold text-red-400">CEO 보고/요청</h3>
+          <h3 className="mb-3 text-sm font-semibold text-red-400">CEO Escalation</h3>
           <p className="mb-3 text-sm text-zinc-300">{data.ceoEscalation.description}</p>
           <div className="flex flex-wrap gap-2">
             {data.ceoEscalation.types.map((type) => (
@@ -278,7 +278,7 @@ export default function AutoWorkflowPage() {
       {/* Disabled agents section */}
       {disabledAgents.length > 0 && (
         <div className="mx-auto mt-10 max-w-4xl">
-          <h2 className="mb-4 text-lg font-semibold text-zinc-400">비활성 에이전트</h2>
+          <h2 className="mb-4 text-lg font-semibold text-zinc-400">Disabled Agents</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {disabledAgents.map((agent) => (
               <div
@@ -287,10 +287,10 @@ export default function AutoWorkflowPage() {
               >
                 <div className="mb-1 flex items-center gap-2">
                   <span className="text-sm font-medium text-zinc-500 line-through">
-                    {agentKoreanName[agent.name] ?? agent.displayName}
+                    {agentDisplayName[agent.name] ?? agent.displayName}
                   </span>
                   <span className="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-400">
-                    비활성
+                    Disabled
                   </span>
                 </div>
                 <p className="text-xs text-zinc-600 line-clamp-2">{agent.roleDescription}</p>
@@ -303,15 +303,15 @@ export default function AutoWorkflowPage() {
 
       {/* Legend */}
       <div className="mx-auto mt-10 max-w-4xl">
-        <h2 className="mb-4 text-lg font-semibold text-zinc-400">범례</h2>
+        <h2 className="mb-4 text-lg font-semibold text-zinc-400">Legend</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <LegendItem color="bg-blue-500/30" label="병렬 기획 단계" />
-          <LegendItem color="bg-purple-500/30" label="기획 모더레이터" />
-          <LegendItem color="bg-green-500/30" label="개발" />
-          <LegendItem color="bg-orange-500/30" label="리뷰" />
+          <LegendItem color="bg-blue-500/30" label="Parallel Planning" />
+          <LegendItem color="bg-purple-500/30" label="Planning Moderator" />
+          <LegendItem color="bg-green-500/30" label="Development" />
+          <LegendItem color="bg-orange-500/30" label="Review" />
           <LegendItem color="bg-cyan-500/30" label="QA" />
-          <LegendItem color="bg-red-500/30" label="CEO 에스컬레이션" />
-          <LegendItem color="bg-yellow-500/30" label="피드백 루프" />
+          <LegendItem color="bg-red-500/30" label="CEO Escalation" />
+          <LegendItem color="bg-yellow-500/30" label="Feedback Loop" />
         </div>
       </div>
     </div>
@@ -332,7 +332,7 @@ function StepCard({ step, index }: { step: WorkflowStep; index: number }) {
         <h3 className={`text-sm font-semibold ${headerColor}`}>{phaseLabel}</h3>
         {step.type === 'parallel' && (
           <span className="inline-flex items-center rounded-full border border-dashed border-blue-500/40 bg-blue-900/20 px-2 py-0.5 text-[10px] font-medium text-blue-400">
-            병렬 실행
+            Parallel
           </span>
         )}
       </div>
@@ -348,14 +348,14 @@ function StepCard({ step, index }: { step: WorkflowStep; index: number }) {
 
 function AgentCard({ agent }: { agent: WorkflowAgent }) {
   const borderColor = getAgentCardBorder(agent);
-  const koreanName = agentKoreanName[agent.name] ?? agent.displayName;
+  const displayName = agentDisplayName[agent.name] ?? agent.displayName;
 
   return (
     <div className={`rounded-lg border ${borderColor} bg-zinc-800/80 p-4`}>
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm font-medium text-zinc-100">{koreanName}</span>
+        <span className="text-sm font-medium text-zinc-100">{displayName}</span>
         <span className="inline-flex items-center rounded-full bg-green-900/40 px-2 py-0.5 text-[10px] font-medium text-green-400">
-          활성
+          Active
         </span>
       </div>
       <p className="mb-2 text-xs text-zinc-400 line-clamp-2">{agent.roleDescription}</p>

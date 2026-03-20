@@ -5,17 +5,17 @@ import { useState } from 'react';
 // --- Table of Contents ---
 
 const tocItems = [
-  { id: 'overview', label: '1. 개요' },
-  { id: 'pipeline', label: '2. 에이전트 파이프라인' },
-  { id: 'cycle-flow', label: '3. 사이클 실행 흐름' },
-  { id: 'planning-meeting', label: '4. 기획 회의 (병렬 기획)' },
-  { id: 'planning-dev-review', label: '5. 기획-개발 리뷰' },
-  { id: 'code-review-loop', label: '6. 코드 리뷰 루프' },
-  { id: 'ceo-escalation', label: '7. CEO 에스컬레이션' },
-  { id: 'self-evolution', label: '8. 프롬프트 자동 진화' },
-  { id: 'scoring', label: '9. 평가 시스템 (Cycle Scoring)' },
-  { id: 'settings-guide', label: '10. 설정 가이드' },
-  { id: 'report-usage', label: '11. 보고서 활용' },
+  { id: 'overview', label: '1. Overview' },
+  { id: 'pipeline', label: '2. Agent Pipeline' },
+  { id: 'cycle-flow', label: '3. Cycle Execution Flow' },
+  { id: 'planning-meeting', label: '4. Planning Meeting (Parallel Planning)' },
+  { id: 'planning-dev-review', label: '5. Planning-Development Review' },
+  { id: 'code-review-loop', label: '6. Code Review Loop' },
+  { id: 'ceo-escalation', label: '7. CEO Escalation' },
+  { id: 'self-evolution', label: '8. Prompt Self-Evolution' },
+  { id: 'scoring', label: '9. Scoring System (Cycle Scoring)' },
+  { id: 'settings-guide', label: '10. Settings Guide' },
+  { id: 'report-usage', label: '11. Using Reports' },
   { id: 'faq', label: '12. FAQ' },
 ];
 
@@ -23,45 +23,45 @@ const tocItems = [
 
 const faqItems = [
   {
-    q: '비용이 너무 많이 나가면?',
-    a: '예산(budget_usd)을 설정하면 한도 초과 시 자동 정지됩니다. 설정 페이지에서 USD 단위로 예산을 지정하세요. 0은 무제한입니다.',
+    q: 'What if costs get too high?',
+    a: 'Set a budget (budget_usd) and the system will auto-stop when the limit is exceeded. Specify the budget in USD on the Settings page. 0 means unlimited.',
   },
   {
-    q: '잘못된 코드를 커밋하면?',
-    a: '각 사이클 전에 git checkpoint를 생성합니다. 빌드 실패, 테스트 실패, 리뷰어 거부 등 문제가 발생하면 자동으로 롤백됩니다. 수동 롤백도 가능합니다.',
+    q: 'What if incorrect code gets committed?',
+    a: 'A git checkpoint is created before each cycle. If a build failure, test failure, or reviewer rejection occurs, it automatically rolls back. Manual rollback is also available.',
   },
   {
-    q: '특정 에이전트를 끄고 싶으면?',
-    a: 'Agents 페이지에서 개별 에이전트를 활성화/비활성화할 수 있습니다. 비활성화된 에이전트는 파이프라인에서 건너뜁니다.',
+    q: 'How do I disable a specific agent?',
+    a: 'You can enable/disable individual agents on the Agents page. Disabled agents are skipped in the pipeline.',
   },
   {
-    q: '기존 단일 디자이너 방식으로 돌아가려면?',
-    a: 'Product Designer를 활성화하고, 3명의 기획자(UX/기술/비즈) + 모더레이터를 비활성화하세요. 파이프라인이 자동으로 Product Designer 기반으로 전환됩니다.',
+    q: 'How do I switch back to the single designer mode?',
+    a: 'Enable Product Designer and disable the 3 planners (UX/Tech/Biz) + Moderator. The pipeline will automatically switch to a Product Designer-based flow.',
   },
   {
-    q: '프로젝트가 Node.js가 아니면?',
-    a: '설정에서 빌드/테스트/린트 명령어를 프로젝트에 맞게 변경하세요. 예: ./gradlew build, flutter test, cargo test, python -m pytest 등.',
+    q: 'What if my project is not Node.js?',
+    a: 'Change the build/test/lint commands in Settings to match your project. Examples: ./gradlew build, flutter test, cargo test, python -m pytest, etc.',
   },
 ];
 
 // --- Settings data ---
 
 const settingsData = [
-  { name: '대상 프로젝트', key: 'target_project', desc: '자율 모드가 작업할 프로젝트의 절대 경로', default: '(없음 - 필수)' },
-  { name: '테스트 명령어', key: 'test_command', desc: '테스트 실행 명령어', default: 'npm test' },
-  { name: '빌드 명령어', key: 'build_command', desc: '빌드 확인 명령어 (비워두면 건너뜀)', default: '(없음)' },
-  { name: '린트 명령어', key: 'lint_command', desc: '린트 확인 명령어 (비워두면 건너뜀)', default: '(없음)' },
-  { name: '최대 사이클', key: 'max_cycles', desc: '0 = 무제한, N = 최대 N사이클 실행 후 자동 정지', default: '0' },
-  { name: '예산', key: 'budget_usd', desc: 'USD 기준 비용 한도, 0 = 무제한', default: '0' },
-  { name: '자동 커밋', key: 'auto_commit', desc: '사이클 성공 시 자동으로 git commit', default: 'true' },
-  { name: '브랜치', key: 'branch_name', desc: '작업 브랜치 이름', default: 'auto/improvements' },
-  { name: '최대 재시도', key: 'max_retries', desc: 'finding당 최대 재시도 횟수', default: '3' },
-  { name: '연속 실패 한도', key: 'max_consecutive_failures', desc: 'N회 연속 실패 시 자동 정지', default: '5' },
-  { name: '리뷰 반복', key: 'review_max_iterations', desc: 'Reviewer - Developer 최대 반복 횟수', default: '2' },
-  { name: '기획자 반복', key: 'max_designer_iterations', desc: 'Moderator - Developer 최대 반복 횟수', default: '2' },
-  { name: '프롬프트 진화', key: 'evolution_enabled', desc: '자동 프롬프트 개선 활성화 여부', default: 'false' },
-  { name: '진화 주기', key: 'evolution_interval', desc: '매 N사이클마다 진화 체크', default: '10' },
-  { name: '평가 윈도우', key: 'evolution_window', desc: '최근 N사이클 성과로 평가', default: '5' },
+  { name: 'Target Project', key: 'target_project', desc: 'Absolute path of the project for autonomous mode to work on', default: '(none - required)' },
+  { name: 'Test Command', key: 'test_command', desc: 'Command to run tests', default: 'npm test' },
+  { name: 'Build Command', key: 'build_command', desc: 'Command to verify build (leave empty to skip)', default: '(none)' },
+  { name: 'Lint Command', key: 'lint_command', desc: 'Command to verify lint (leave empty to skip)', default: '(none)' },
+  { name: 'Max Cycles', key: 'max_cycles', desc: '0 = unlimited, N = auto-stop after N cycles', default: '0' },
+  { name: 'Budget', key: 'budget_usd', desc: 'Cost limit in USD, 0 = unlimited', default: '0' },
+  { name: 'Auto Commit', key: 'auto_commit', desc: 'Automatically git commit on successful cycle', default: 'true' },
+  { name: 'Branch', key: 'branch_name', desc: 'Working branch name', default: 'auto/improvements' },
+  { name: 'Max Retries', key: 'max_retries', desc: 'Maximum retry attempts per finding', default: '3' },
+  { name: 'Consecutive Failure Limit', key: 'max_consecutive_failures', desc: 'Auto-stop after N consecutive failures', default: '5' },
+  { name: 'Review Iterations', key: 'review_max_iterations', desc: 'Max Reviewer - Developer feedback iterations', default: '2' },
+  { name: 'Planner Iterations', key: 'max_designer_iterations', desc: 'Max Moderator - Developer feedback iterations', default: '2' },
+  { name: 'Prompt Evolution', key: 'evolution_enabled', desc: 'Enable automatic prompt improvement', default: 'false' },
+  { name: 'Evolution Interval', key: 'evolution_interval', desc: 'Check for evolution every N cycles', default: '10' },
+  { name: 'Evaluation Window', key: 'evolution_window', desc: 'Evaluate performance over last N cycles', default: '5' },
 ];
 
 // --- FAQ Accordion Item ---
@@ -132,12 +132,12 @@ export default function AutoGuidePage() {
     <div className="min-h-screen bg-zinc-900 text-zinc-300">
       <div className="max-w-4xl mx-auto px-6 py-8">
         {/* Title */}
-        <h1 className="text-3xl font-bold text-zinc-100 mb-2">자율 모드 가이드</h1>
+        <h1 className="text-3xl font-bold text-zinc-100 mb-2">Autonomous Mode Guide</h1>
         <div className="h-1 w-24 bg-blue-500 mb-8" />
 
         {/* Table of Contents */}
         <div className="bg-zinc-800 rounded-lg p-6 mb-10 border border-zinc-700">
-          <h2 className="text-lg font-semibold text-zinc-100 mb-4">목차</h2>
+          <h2 className="text-lg font-semibold text-zinc-100 mb-4">Table of Contents</h2>
           <nav className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {tocItems.map((item) => (
               <button
@@ -153,404 +153,404 @@ export default function AutoGuidePage() {
 
         {/* Sections */}
         <div className="space-y-12">
-          {/* 1. 개요 */}
+          {/* 1. Overview */}
           <section>
-            <SectionHeading id="overview" number={1} title="개요" />
+            <SectionHeading id="overview" number={1} title="Overview" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                mclaude 자율 모드는 <strong className="text-zinc-100">AI 에이전트 팀</strong>이 자동으로 프로젝트를 분석하고 개선하는 시스템입니다.
-                여러 전문가 에이전트가 각자의 관점에서 코드베이스를 분석하고, 회의를 통해 합의를 도출하고, 개발하고, 리뷰하고, 테스트합니다.
+                mclaude autonomous mode is a system where an <strong className="text-zinc-100">AI agent team</strong> automatically analyzes and improves your project.
+                Multiple specialist agents analyze the codebase from their own perspectives, reach consensus through meetings, develop, review, and test.
               </p>
               <p>
-                사람(CEO)은 보고서를 확인하고, 필요할 때 지시를 내리는 역할입니다.
-                에이전트가 직접 해결하기 어려운 문제가 생기면 CEO에게 에스컬레이션 요청을 보냅니다.
+                The human (CEO) reviews reports and gives directions when needed.
+                When agents encounter problems they cannot resolve on their own, they send escalation requests to the CEO.
               </p>
               <InfoBox>
-                자율 모드는 <strong>완전 자동화</strong>가 목표입니다. 시작 버튼을 누르면 에이전트 팀이 스스로 작업을 찾고,
-                기획하고, 구현하고, 테스트합니다. CEO는 결과를 확인하고 방향을 조정하는 것만으로 프로젝트를 운영할 수 있습니다.
+                Autonomous mode aims for <strong>full automation</strong>. Press the start button and the agent team will find work,
+                plan, implement, and test on its own. The CEO can operate the project simply by reviewing results and adjusting direction.
               </InfoBox>
             </div>
           </section>
 
-          {/* 2. 에이전트 파이프라인 */}
+          {/* 2. Agent Pipeline */}
           <section>
-            <SectionHeading id="pipeline" number={2} title="에이전트 파이프라인" />
+            <SectionHeading id="pipeline" number={2} title="Agent Pipeline" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                자율 모드의 핵심은 <strong className="text-zinc-100">에이전트 파이프라인</strong>입니다.
-                각 사이클마다 여러 에이전트가 순차적 또는 병렬로 실행되어 하나의 작업을 완수합니다.
+                The core of autonomous mode is the <strong className="text-zinc-100">agent pipeline</strong>.
+                Each cycle runs multiple agents sequentially or in parallel to complete a single task.
               </p>
 
               {/* Pipeline diagram */}
               <div className="bg-zinc-950 rounded-lg p-5 border border-zinc-700 font-mono text-xs overflow-x-auto">
-                <pre className="text-zinc-300">{`┌─────────────┐
-│  UX 기획자   │─┐
-└─────────────┘  │
-┌─────────────┐  │                 ┌──────────────┐    ┌───────────┐    ┌──────────┐    ┌────────────┐
-│ 기술 기획자  │─┼─ 병렬 실행 ──→ │ 기획 모더레이터 │──→│ Developer │──→│ Reviewer │──→│ QA Engineer│
-└─────────────┘  │                 └──────────────┘    └───────────┘    └──────────┘    └────────────┘
-┌─────────────┐  │
-│ 비즈 기획자  │─┘
-└─────────────┘`}</pre>
+                <pre className="text-zinc-300">{`┌──────────────┐
+│  UX Planner  │─┐
+└──────────────┘  │
+┌──────────────┐  │                  ┌────────────────────┐    ┌───────────┐    ┌──────────┐    ┌────────────┐
+│ Tech Planner │─┼─ Parallel ───→  │ Planning Moderator │──→│ Developer │──→│ Reviewer │──→│ QA Engineer│
+└──────────────┘  │                  └────────────────────┘    └───────────┘    └──────────┘    └────────────┘
+┌──────────────┐  │
+│ Biz Planner  │─┘
+└──────────────┘`}</pre>
               </div>
 
               {/* Agent descriptions */}
               <div className="grid gap-3">
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-1">UX 기획자</h3>
-                  <p className="text-zinc-400">사용자 경험, 화면 흐름, 접근성 분석. 사용자 관점에서 앱의 문제점과 개선점을 발견합니다.</p>
+                  <h3 className="font-semibold text-zinc-100 mb-1">UX Planner</h3>
+                  <p className="text-zinc-400">Analyzes user experience, screen flows, and accessibility. Identifies problems and improvements from the user&apos;s perspective.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-1">기술 기획자</h3>
-                  <p className="text-zinc-400">아키텍처, 성능, 보안, 기술 부채 분석. 코드 품질과 기술적 리스크를 평가합니다.</p>
+                  <h3 className="font-semibold text-zinc-100 mb-1">Tech Planner</h3>
+                  <p className="text-zinc-400">Analyzes architecture, performance, security, and technical debt. Evaluates code quality and technical risk.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-1">비즈 기획자</h3>
-                  <p className="text-zinc-400">비즈니스 임팩트, 사용자 가치, 우선순위 분석. ROI와 전략적 가치를 기준으로 판단합니다.</p>
+                  <h3 className="font-semibold text-zinc-100 mb-1">Biz Planner</h3>
+                  <p className="text-zinc-400">Analyzes business impact, user value, and priorities. Makes decisions based on ROI and strategic value.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-1">기획 모더레이터</h3>
-                  <p className="text-zinc-400">3명의 기획자 의견을 종합하고, 충돌을 해결하고, 최종 기획서를 작성합니다.</p>
+                  <h3 className="font-semibold text-zinc-100 mb-1">Planning Moderator</h3>
+                  <p className="text-zinc-400">Synthesizes opinions from the 3 planners, resolves conflicts, and produces the final specification.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
                   <h3 className="font-semibold text-zinc-100 mb-1">Developer</h3>
-                  <p className="text-zinc-400">확정된 기획서를 기반으로 코드를 구현합니다. 기술적 블로커 발견 시 기획 모더레이터에게 피드백합니다.</p>
+                  <p className="text-zinc-400">Implements code based on the finalized spec. Sends feedback to the Planning Moderator if technical blockers are found.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
                   <h3 className="font-semibold text-zinc-100 mb-1">Reviewer</h3>
-                  <p className="text-zinc-400">코드 품질, 버그, 보안, 설계 일관성을 리뷰합니다. 승인 또는 수정 요청을 내립니다.</p>
+                  <p className="text-zinc-400">Reviews code quality, bugs, security, and design consistency. Issues approval or requests changes.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
                   <h3 className="font-semibold text-zinc-100 mb-1">QA Engineer</h3>
-                  <p className="text-zinc-400">E2E 테스트를 실행하고 기능이 정상적으로 동작하는지 검증합니다.</p>
+                  <p className="text-zinc-400">Runs E2E tests to verify that features work correctly.</p>
                 </div>
               </div>
             </div>
           </section>
 
-          {/* 3. 사이클 실행 흐름 */}
+          {/* 3. Cycle Execution Flow */}
           <section>
-            <SectionHeading id="cycle-flow" number={3} title="사이클 실행 흐름" />
+            <SectionHeading id="cycle-flow" number={3} title="Cycle Execution Flow" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                하나의 <strong className="text-zinc-100">&quot;사이클&quot;</strong>은 에이전트 파이프라인의 1회 완전 실행입니다.
-                사이클마다 하나의 finding(발견 항목)을 처리합니다.
+                A single <strong className="text-zinc-100">&quot;cycle&quot;</strong> is one complete execution of the agent pipeline.
+                Each cycle processes one finding.
               </p>
               <div className="bg-zinc-800 rounded-lg p-5 border border-zinc-700">
                 <ol className="space-y-3 text-zinc-300">
                   <li className="flex gap-3">
                     <span className="shrink-0 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold text-white">1</span>
-                    <span><strong className="text-zinc-100">Git Checkpoint 생성</strong> - 현재 상태를 기록하여 롤백 가능하게 합니다</span>
+                    <span><strong className="text-zinc-100">Git Checkpoint</strong> - Records current state so rollback is possible</span>
                   </li>
                   <li className="flex gap-3">
                     <span className="shrink-0 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span>
-                    <span><strong className="text-zinc-100">기획자 병렬 분석</strong> - UX/기술/비즈 기획자가 동시에 코드를 분석합니다</span>
+                    <span><strong className="text-zinc-100">Parallel Planner Analysis</strong> - UX/Tech/Biz planners analyze the code simultaneously</span>
                   </li>
                   <li className="flex gap-3">
                     <span className="shrink-0 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold text-white">3</span>
-                    <span><strong className="text-zinc-100">기획 모더레이터 종합</strong> - 분석 결과를 종합하여 최종 기획서를 작성합니다</span>
+                    <span><strong className="text-zinc-100">Planning Moderator Synthesis</strong> - Synthesizes analysis results into a final specification</span>
                   </li>
                   <li className="flex gap-3">
                     <span className="shrink-0 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold text-white">4</span>
-                    <span><strong className="text-zinc-100">Developer 구현</strong> - 기획서에 따라 코드를 작성합니다</span>
+                    <span><strong className="text-zinc-100">Developer Implementation</strong> - Writes code according to the specification</span>
                   </li>
                   <li className="flex gap-3">
                     <span className="shrink-0 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold text-white">5</span>
-                    <span><strong className="text-zinc-100">Reviewer 리뷰</strong> - 코드를 검토하고 승인/거부합니다</span>
+                    <span><strong className="text-zinc-100">Reviewer Review</strong> - Reviews and approves/rejects the code</span>
                   </li>
                   <li className="flex gap-3">
                     <span className="shrink-0 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold text-white">6</span>
-                    <span><strong className="text-zinc-100">QA 테스트</strong> - E2E 테스트로 기능을 검증합니다</span>
+                    <span><strong className="text-zinc-100">QA Test</strong> - Verifies functionality with E2E tests</span>
                   </li>
                   <li className="flex gap-3">
                     <span className="shrink-0 w-6 h-6 bg-green-600 rounded-full flex items-center justify-center text-xs font-bold text-white">7</span>
-                    <span><strong className="text-zinc-100">성공 시 자동 커밋</strong> / 실패 시 롤백 후 재시도 (최대 N회)</span>
+                    <span><strong className="text-zinc-100">Auto commit on success</strong> / rollback and retry on failure (up to N times)</span>
                   </li>
                 </ol>
               </div>
               <InfoBox>
-                <strong>안전장치:</strong> 최대 사이클 수, 예산 한도, 연속 실패 한도를 설정하여 무한 실행을 방지합니다.
-                어떤 한도에 도달하면 자동으로 정지되고 보고서에 사유가 기록됩니다.
+                <strong>Safety measures:</strong> Configure max cycles, budget limits, and consecutive failure limits to prevent infinite execution.
+                When any limit is reached, the system auto-stops and the reason is recorded in the report.
               </InfoBox>
             </div>
           </section>
 
-          {/* 4. 기획 회의 (병렬 기획) */}
+          {/* 4. Planning Meeting (Parallel Planning) */}
           <section>
-            <SectionHeading id="planning-meeting" number={4} title="기획 회의 (병렬 기획)" />
+            <SectionHeading id="planning-meeting" number={4} title="Planning Meeting (Parallel Planning)" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                자율 모드의 독특한 점은 <strong className="text-zinc-100">3명의 전문 기획자</strong>가 동시에 프로젝트를 분석하는 것입니다.
-                각자 다른 렌즈로 같은 코드를 보기 때문에, 단일 분석으로는 놓칠 수 있는 문제를 발견할 수 있습니다.
+                A unique aspect of autonomous mode is that <strong className="text-zinc-100">3 specialist planners</strong> analyze the project simultaneously.
+                Because each looks through a different lens at the same code, they can find issues that a single analysis might miss.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700 text-center">
                   <div className="text-2xl mb-2">&#x1F3A8;</div>
-                  <h3 className="font-semibold text-zinc-100 mb-1">UX 관점</h3>
-                  <p className="text-xs text-zinc-400">화면 흐름, 인터랙션, 접근성, 빈 상태 처리, 에러 표시</p>
+                  <h3 className="font-semibold text-zinc-100 mb-1">UX Perspective</h3>
+                  <p className="text-xs text-zinc-400">Screen flows, interactions, accessibility, empty states, error display</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700 text-center">
                   <div className="text-2xl mb-2">&#x2699;</div>
-                  <h3 className="font-semibold text-zinc-100 mb-1">기술 관점</h3>
-                  <p className="text-xs text-zinc-400">아키텍처, 성능 병목, 보안 취약점, 에러 핸들링, 기술 부채</p>
+                  <h3 className="font-semibold text-zinc-100 mb-1">Technical Perspective</h3>
+                  <p className="text-xs text-zinc-400">Architecture, performance bottlenecks, security vulnerabilities, error handling, tech debt</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700 text-center">
                   <div className="text-2xl mb-2">&#x1F4C8;</div>
-                  <h3 className="font-semibold text-zinc-100 mb-1">비즈니스 관점</h3>
-                  <p className="text-xs text-zinc-400">사용자 가치, 비즈니스 임팩트, 경쟁력, 이탈 방지, 성장 기여</p>
+                  <h3 className="font-semibold text-zinc-100 mb-1">Business Perspective</h3>
+                  <p className="text-xs text-zinc-400">User value, business impact, competitiveness, churn prevention, growth contribution</p>
                 </div>
               </div>
 
               <p>
-                기획 모더레이터가 3명의 결과를 종합할 때 다음 원칙을 따릅니다:
+                The Planning Moderator follows these principles when synthesizing the results from all 3 planners:
               </p>
               <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                <h3 className="font-semibold text-zinc-100 mb-2">충돌 해결 우선순위</h3>
+                <h3 className="font-semibold text-zinc-100 mb-2">Conflict Resolution Priority</h3>
                 <ol className="list-decimal list-inside space-y-1 text-zinc-300">
-                  <li><strong className="text-red-400">보안/버그 (P0)</strong> - 가장 높은 우선순위</li>
-                  <li><strong className="text-yellow-400">사용자 가치</strong> - 사용자에게 직접적인 영향을 주는 개선</li>
-                  <li><strong className="text-blue-400">기술 부채</strong> - 장기적 유지보수성 향상</li>
+                  <li><strong className="text-red-400">Security/Bugs (P0)</strong> - Highest priority</li>
+                  <li><strong className="text-yellow-400">User Value</strong> - Improvements with direct user impact</li>
+                  <li><strong className="text-blue-400">Tech Debt</strong> - Long-term maintainability improvements</li>
                 </ol>
                 <p className="mt-3 text-zinc-400">
-                  추가 원칙: <strong className="text-zinc-200">Quick win</strong> (작은 노력 + 큰 임팩트)을 우선합니다.
-                  구현 난이도가 높으면 우선순위를 한 단계 낮춥니다.
+                  Additional principle: <strong className="text-zinc-200">Quick wins</strong> (low effort + high impact) are prioritized.
+                  Items with high implementation difficulty are lowered by one priority level.
                 </p>
               </div>
             </div>
           </section>
 
-          {/* 5. 기획-개발 리뷰 */}
+          {/* 5. Planning-Development Review */}
           <section>
-            <SectionHeading id="planning-dev-review" number={5} title="기획-개발 리뷰" />
+            <SectionHeading id="planning-dev-review" number={5} title="Planning-Development Review" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                Developer가 구현 중 기획서의 기술적 문제를 발견할 수 있습니다.
-                이때 <strong className="text-zinc-100">&quot;BLOCKER&quot;</strong> 신호를 보내 기획 모더레이터에게 피드백합니다.
+                The Developer may discover technical issues with the specification during implementation.
+                In that case, a <strong className="text-zinc-100">&quot;BLOCKER&quot;</strong> signal is sent to provide feedback to the Planning Moderator.
               </p>
 
               <div className="bg-zinc-950 rounded-lg p-5 border border-zinc-700 font-mono text-xs">
-                <pre className="text-zinc-300">{`Developer: "이 기능은 현재 DB 스키마로는 구현 불가"
-    │
-    ▼  BLOCKER 발생
-기획 모더레이터: 기획서 수정 (대안 제시)
-    │
-    ▼  수정된 기획서 전달
-Developer: 수정된 기획서로 재시도
-    │
-    ▼  (최대 N회 반복)
-성공 → Reviewer로 진행`}</pre>
+                <pre className="text-zinc-300">{`Developer: "This feature cannot be implemented with the current DB schema"
+    |
+    v  BLOCKER raised
+Planning Moderator: Revises spec (proposes alternative)
+    |
+    v  Revised spec delivered
+Developer: Retries with revised spec
+    |
+    v  (up to N iterations)
+Success -> Proceed to Reviewer`}</pre>
               </div>
 
               <InfoBox>
-                <strong>기획자 반복 횟수(max_designer_iterations)</strong> 설정으로 최대 반복 횟수를 제한할 수 있습니다.
-                기본값은 2회입니다. BLOCKER가 반복 한도를 초과하면 해당 finding은 &quot;포기(wont_fix)&quot; 처리됩니다.
+                The <strong>max_designer_iterations</strong> setting limits the maximum number of iterations.
+                Default is 2. If the BLOCKER exceeds the iteration limit, the finding is marked as &quot;Won&apos;t Fix (wont_fix)&quot;.
               </InfoBox>
             </div>
           </section>
 
-          {/* 6. 코드 리뷰 루프 */}
+          {/* 6. Code Review Loop */}
           <section>
-            <SectionHeading id="code-review-loop" number={6} title="코드 리뷰 루프" />
+            <SectionHeading id="code-review-loop" number={6} title="Code Review Loop" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                Reviewer는 Developer의 코드를 검토하고 <strong className="text-zinc-100">승인(approved)</strong> 또는
-                <strong className="text-zinc-100"> 거부(rejected)</strong>합니다.
+                The Reviewer inspects the Developer&apos;s code and either <strong className="text-zinc-100">approves</strong> or
+                <strong className="text-zinc-100"> rejects</strong> it.
               </p>
 
               <div className="bg-zinc-950 rounded-lg p-5 border border-zinc-700 font-mono text-xs">
-                <pre className="text-zinc-300">{`Developer: 코드 구현 완료
-    │
-    ▼
-Reviewer: 코드 리뷰
-    │
-    ├─ 승인 (approved: true) → QA 테스트로 진행
-    │
-    └─ 거부 (approved: false)
-         │
-         ▼  피드백 전달
-    Developer: 피드백 반영하여 수정
-         │
-         ▼  (최대 N회 반복)
-    Reviewer: 재검토`}</pre>
+                <pre className="text-zinc-300">{`Developer: Code implementation complete
+    |
+    v
+Reviewer: Code review
+    |
+    +-- Approved (approved: true) -> Proceed to QA test
+    |
+    +-- Rejected (approved: false)
+         |
+         v  Feedback delivered
+    Developer: Applies feedback and revises
+         |
+         v  (up to N iterations)
+    Reviewer: Re-review`}</pre>
               </div>
 
-              <p>리뷰어가 검토하는 항목:</p>
+              <p>Items the Reviewer checks:</p>
               <ul className="list-disc list-inside space-y-1 text-zinc-300 ml-2">
-                <li>코드 품질과 일관성</li>
-                <li>잠재적 버그와 엣지 케이스</li>
-                <li>에러 핸들링 적절성</li>
-                <li>기획서 요구사항 충족 여부</li>
-                <li>보안 취약점</li>
+                <li>Code quality and consistency</li>
+                <li>Potential bugs and edge cases</li>
+                <li>Error handling adequacy</li>
+                <li>Spec requirements fulfillment</li>
+                <li>Security vulnerabilities</li>
               </ul>
 
               <InfoBox>
-                <strong>리뷰 반복 횟수(review_max_iterations)</strong> 설정으로 최대 반복 횟수를 제한합니다.
-                기본값은 2회입니다. 한도를 초과해도 승인되지 않으면 현재 상태로 QA 단계로 넘어갑니다.
+                The <strong>review_max_iterations</strong> setting limits the maximum number of iterations.
+                Default is 2. If the limit is exceeded without approval, the current state proceeds to the QA stage.
               </InfoBox>
             </div>
           </section>
 
-          {/* 7. CEO 에스컬레이션 */}
+          {/* 7. CEO Escalation */}
           <section>
-            <SectionHeading id="ceo-escalation" number={7} title="CEO 에스컬레이션" />
+            <SectionHeading id="ceo-escalation" number={7} title="CEO Escalation" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                에이전트가 직접 해결할 수 없는 문제가 있을 때 <strong className="text-zinc-100">CEO에게 에스컬레이션 요청</strong>을 보냅니다.
-                보고서 페이지에서 요청을 확인하고 응답할 수 있습니다.
+                When agents encounter problems they cannot resolve on their own, they send an <strong className="text-zinc-100">escalation request to the CEO</strong>.
+                You can view and respond to requests on the Report page.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-2">요청 유형</h3>
+                  <h3 className="font-semibold text-zinc-100 mb-2">Request Types</h3>
                   <ul className="space-y-2 text-zinc-300">
-                    <li><span className="inline-block bg-red-900/50 text-red-300 text-xs px-2 py-0.5 rounded mr-2">권한</span>외부 서비스 접근, API 키 등</li>
-                    <li><span className="inline-block bg-yellow-900/50 text-yellow-300 text-xs px-2 py-0.5 rounded mr-2">리소스</span>추가 라이브러리, 도구 등</li>
-                    <li><span className="inline-block bg-blue-900/50 text-blue-300 text-xs px-2 py-0.5 rounded mr-2">의사결정</span>설계 방향, 기능 범위 등</li>
-                    <li><span className="inline-block bg-green-900/50 text-green-300 text-xs px-2 py-0.5 rounded mr-2">정보</span>비즈니스 요구사항, 기존 결정 등</li>
+                    <li><span className="inline-block bg-red-900/50 text-red-300 text-xs px-2 py-0.5 rounded mr-2">Permission</span>External service access, API keys, etc.</li>
+                    <li><span className="inline-block bg-yellow-900/50 text-yellow-300 text-xs px-2 py-0.5 rounded mr-2">Resource</span>Additional libraries, tools, etc.</li>
+                    <li><span className="inline-block bg-blue-900/50 text-blue-300 text-xs px-2 py-0.5 rounded mr-2">Decision</span>Design direction, feature scope, etc.</li>
+                    <li><span className="inline-block bg-green-900/50 text-green-300 text-xs px-2 py-0.5 rounded mr-2">Information</span>Business requirements, prior decisions, etc.</li>
                   </ul>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-2">차단/비차단</h3>
+                  <h3 className="font-semibold text-zinc-100 mb-2">Blocking / Non-blocking</h3>
                   <div className="space-y-3">
                     <div>
-                      <p className="text-zinc-100 font-medium text-xs mb-1">차단(blocking) 요청</p>
-                      <p className="text-zinc-400 text-xs">CEO 응답 전까지 관련 작업이 보류됩니다. 반드시 응답이 필요한 중요한 문제입니다.</p>
+                      <p className="text-zinc-100 font-medium text-xs mb-1">Blocking request</p>
+                      <p className="text-zinc-400 text-xs">Related work is on hold until CEO responds. These are critical issues that require a response.</p>
                     </div>
                     <div>
-                      <p className="text-zinc-100 font-medium text-xs mb-1">비차단(non-blocking) 요청</p>
-                      <p className="text-zinc-400 text-xs">작업은 계속 진행됩니다. CEO 응답은 다음 사이클에 반영됩니다.</p>
+                      <p className="text-zinc-100 font-medium text-xs mb-1">Non-blocking request</p>
+                      <p className="text-zinc-400 text-xs">Work continues. CEO response is applied in the next cycle.</p>
                     </div>
                   </div>
                 </div>
               </div>
 
               <InfoBox>
-                보고서 페이지(<code className="bg-zinc-800 px-1.5 py-0.5 rounded text-blue-300 text-xs">/auto/report</code>)에서
-                대기중인 요청을 확인하고 응답할 수 있습니다. 차단 요청은 빠르게 응답하는 것이 좋습니다.
+                On the Report page (<code className="bg-zinc-800 px-1.5 py-0.5 rounded text-blue-300 text-xs">/auto/report</code>),
+                you can view pending requests and respond. It is recommended to respond to blocking requests promptly.
               </InfoBox>
             </div>
           </section>
 
-          {/* 8. 프롬프트 자동 진화 */}
+          {/* 8. Prompt Self-Evolution */}
           <section>
-            <SectionHeading id="self-evolution" number={8} title="프롬프트 자동 진화 (Self-Evolution)" />
+            <SectionHeading id="self-evolution" number={8} title="Prompt Self-Evolution" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                에이전트의 시스템 프롬프트를 <strong className="text-zinc-100">AI가 자동으로 개선</strong>하는 기능입니다.
-                매 N사이클마다 에이전트 성과를 평가하고, 성적이 나쁜 에이전트의 프롬프트를 변형(mutation)합니다.
+                This feature <strong className="text-zinc-100">automatically improves agent system prompts using AI</strong>.
+                Every N cycles, agent performance is evaluated, and underperforming agents have their prompts mutated.
               </p>
 
               <div className="bg-zinc-950 rounded-lg p-5 border border-zinc-700 font-mono text-xs">
-                <pre className="text-zinc-300">{`매 N사이클마다:
-    │
-    ▼
-에이전트별 최근 성과 평가 (평가 윈도우)
-    │
-    ├─ 성적 양호 → 현재 프롬프트 유지
-    │
-    └─ 성적 부진
-         │
-         ▼
-    AI가 프롬프트 변형(mutation) 생성
-         │
-         ▼
-    변형 프롬프트로 N사이클 실행
-         │
-         ├─ 성과 개선 → 변형 프롬프트 채택
-         │
-         └─ 성과 악화 → 이전 프롬프트로 롤백`}</pre>
+                <pre className="text-zinc-300">{`Every N cycles:
+    |
+    v
+Evaluate each agent's recent performance (evaluation window)
+    |
+    +-- Performance OK -> Keep current prompt
+    |
+    +-- Underperforming
+         |
+         v
+    AI generates prompt mutation
+         |
+         v
+    Run N cycles with mutated prompt
+         |
+         +-- Performance improved -> Adopt mutated prompt
+         |
+         +-- Performance worsened -> Roll back to previous prompt`}</pre>
               </div>
 
               <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                <h3 className="font-semibold text-zinc-100 mb-2">관련 설정</h3>
+                <h3 className="font-semibold text-zinc-100 mb-2">Related Settings</h3>
                 <ul className="space-y-1 text-zinc-300">
-                  <li><code className="bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-200 text-xs">evolution_enabled</code> - 활성화 여부 (기본: 비활성화)</li>
-                  <li><code className="bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-200 text-xs">evolution_interval</code> - 진화 체크 주기 (기본: 10사이클)</li>
-                  <li><code className="bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-200 text-xs">evolution_window</code> - 평가할 최근 사이클 수 (기본: 5)</li>
+                  <li><code className="bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-200 text-xs">evolution_enabled</code> - Enable/disable (default: disabled)</li>
+                  <li><code className="bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-200 text-xs">evolution_interval</code> - Evolution check interval (default: 10 cycles)</li>
+                  <li><code className="bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-200 text-xs">evolution_window</code> - Number of recent cycles to evaluate (default: 5)</li>
                 </ul>
               </div>
 
               <InfoBox>
-                프롬프트 진화는 실험적 기능입니다. 충분히 안정적인 상태에서 활성화하는 것을 권장합니다.
-                진화 결과는 Agents 페이지에서 프롬프트 변형 이력으로 확인할 수 있습니다.
+                Prompt evolution is an experimental feature. It is recommended to enable it only when the system is sufficiently stable.
+                Evolution results can be viewed as prompt mutation history on the Agents page.
               </InfoBox>
             </div>
           </section>
 
-          {/* 9. 평가 시스템 */}
+          {/* 9. Scoring System */}
           <section>
-            <SectionHeading id="scoring" number={9} title="평가 시스템 (Cycle Scoring)" />
+            <SectionHeading id="scoring" number={9} title="Scoring System (Cycle Scoring)" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                각 사이클에 <strong className="text-zinc-100">0~100점의 복합 점수</strong>가 부여됩니다.
-                이 점수는 프롬프트 진화, 성과 추적, 품질 모니터링에 사용됩니다.
+                Each cycle is assigned a <strong className="text-zinc-100">composite score of 0-100</strong>.
+                This score is used for prompt evolution, performance tracking, and quality monitoring.
               </p>
 
               <div className="bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-zinc-700 bg-zinc-800">
-                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold">평가 항목</th>
-                      <th className="text-center px-4 py-3 text-zinc-300 font-semibold">배점</th>
-                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold">설명</th>
+                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold">Criterion</th>
+                      <th className="text-center px-4 py-3 text-zinc-300 font-semibold">Points</th>
+                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold">Description</th>
                     </tr>
                   </thead>
                   <tbody className="text-zinc-300">
                     <tr className="border-b border-zinc-700/50 bg-zinc-800/50">
                       <td className="px-4 py-3 font-medium text-zinc-100">L0 Gate</td>
-                      <td className="px-4 py-3 text-center">25점</td>
-                      <td className="px-4 py-3">빌드/린트 통과 여부. 실패 시 총점 최대 25점으로 제한</td>
+                      <td className="px-4 py-3 text-center">25</td>
+                      <td className="px-4 py-3">Build/lint pass. Total score capped at 25 on failure</td>
                     </tr>
                     <tr className="border-b border-zinc-700/50">
                       <td className="px-4 py-3 font-medium text-zinc-100">L1 Test</td>
-                      <td className="px-4 py-3 text-center">30점</td>
-                      <td className="px-4 py-3">테스트 통과율에 비례. 전체 통과 시 만점</td>
+                      <td className="px-4 py-3 text-center">30</td>
+                      <td className="px-4 py-3">Proportional to test pass rate. Full marks when all pass</td>
                     </tr>
                     <tr className="border-b border-zinc-700/50 bg-zinc-800/50">
                       <td className="px-4 py-3 font-medium text-zinc-100">L2 Process</td>
-                      <td className="px-4 py-3 text-center">20점</td>
-                      <td className="px-4 py-3">리뷰어 승인 여부, 리뷰 반복 횟수 (적을수록 높은 점수)</td>
+                      <td className="px-4 py-3 text-center">20</td>
+                      <td className="px-4 py-3">Reviewer approval, review iteration count (fewer = higher score)</td>
                     </tr>
                     <tr className="border-b border-zinc-700/50">
                       <td className="px-4 py-3 font-medium text-zinc-100">Value</td>
-                      <td className="px-4 py-3 text-center">15점</td>
-                      <td className="px-4 py-3">Finding 해결 여부, 새로운 발견 기여도</td>
+                      <td className="px-4 py-3 text-center">15</td>
+                      <td className="px-4 py-3">Finding resolution, new discovery contribution</td>
                     </tr>
                     <tr>
                       <td className="px-4 py-3 font-medium text-zinc-100">Efficiency</td>
-                      <td className="px-4 py-3 text-center">10점</td>
-                      <td className="px-4 py-3">비용 효율성 (같은 결과를 더 적은 비용으로)</td>
+                      <td className="px-4 py-3 text-center">10</td>
+                      <td className="px-4 py-3">Cost efficiency (same results at lower cost)</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
 
               <InfoBox>
-                빌드/린트 명령어는 프로젝트에 맞게 설정하세요. Node.js 프로젝트는 <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-blue-300 text-xs">npm run build</code>,
-                Gradle 프로젝트는 <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-blue-300 text-xs">./gradlew build</code>,
-                Flutter 프로젝트는 <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-blue-300 text-xs">flutter analyze</code> 등을 설정합니다.
-                설정하지 않으면 해당 검사를 건너뜁니다.
+                Configure build/lint commands to match your project. For Node.js: <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-blue-300 text-xs">npm run build</code>,
+                Gradle: <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-blue-300 text-xs">./gradlew build</code>,
+                Flutter: <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-blue-300 text-xs">flutter analyze</code>, etc.
+                If not configured, the corresponding check is skipped.
               </InfoBox>
             </div>
           </section>
 
-          {/* 10. 설정 가이드 */}
+          {/* 10. Settings Guide */}
           <section>
-            <SectionHeading id="settings-guide" number={10} title="설정 가이드" />
+            <SectionHeading id="settings-guide" number={10} title="Settings Guide" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                Settings 페이지(<code className="bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-200 text-xs">/auto/settings</code>)에서
-                자율 모드의 동작을 세밀하게 조정할 수 있습니다.
+                On the Settings page (<code className="bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-200 text-xs">/auto/settings</code>),
+                you can fine-tune the behavior of autonomous mode.
               </p>
 
               <div className="bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-zinc-700 bg-zinc-800">
-                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold whitespace-nowrap">설정</th>
-                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold">설명</th>
-                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold whitespace-nowrap">기본값</th>
+                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold whitespace-nowrap">Setting</th>
+                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold">Description</th>
+                      <th className="text-left px-4 py-3 text-zinc-300 font-semibold whitespace-nowrap">Default</th>
                     </tr>
                   </thead>
                   <tbody className="text-zinc-300">
@@ -572,37 +572,37 @@ Reviewer: 코드 리뷰
             </div>
           </section>
 
-          {/* 11. 보고서 활용 */}
+          {/* 11. Using Reports */}
           <section>
-            <SectionHeading id="report-usage" number={11} title="보고서 활용" />
+            <SectionHeading id="report-usage" number={11} title="Using Reports" />
             <div className="space-y-4 text-sm leading-relaxed">
               <p>
-                보고서 페이지(<code className="bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-200 text-xs">/auto/report</code>)는
-                CEO가 자율 모드의 전체 현황을 파악하고 지시를 내리는 <strong className="text-zinc-100">중앙 관제 화면</strong>입니다.
+                The Report page (<code className="bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-200 text-xs">/auto/report</code>) is
+                the <strong className="text-zinc-100">central control panel</strong> where the CEO monitors the overall status of autonomous mode and issues instructions.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-2">발견 항목 현황</h3>
-                  <p className="text-zinc-400 text-xs">해결됨, 진행중, 미해결, 포기 상태별 finding 통계. 카테고리와 우선순위별 분포를 한눈에 확인합니다.</p>
+                  <h3 className="font-semibold text-zinc-100 mb-2">Findings Overview</h3>
+                  <p className="text-zinc-400 text-xs">Finding statistics by status: resolved, in progress, open, won&apos;t fix. View distribution by category and priority at a glance.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-2">최근 사이클</h3>
-                  <p className="text-zinc-400 text-xs">각 사이클의 점수, 비용, 소요시간, 성공/실패 여부를 표로 확인합니다.</p>
+                  <h3 className="font-semibold text-zinc-100 mb-2">Recent Cycles</h3>
+                  <p className="text-zinc-400 text-xs">View each cycle&apos;s score, cost, duration, and success/failure status in a table.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-2">CEO 요청</h3>
-                  <p className="text-zinc-400 text-xs">에이전트가 보낸 에스컬레이션 요청을 확인하고 응답합니다. 차단 요청은 빠르게 처리하세요.</p>
+                  <h3 className="font-semibold text-zinc-100 mb-2">CEO Requests</h3>
+                  <p className="text-zinc-400 text-xs">View and respond to escalation requests from agents. Handle blocking requests promptly.</p>
                 </div>
                 <div className="bg-zinc-800 rounded-lg p-4 border border-zinc-700">
-                  <h3 className="font-semibold text-zinc-100 mb-2">지시사항</h3>
-                  <p className="text-zinc-400 text-xs">새로운 방향을 지시할 수 있습니다. 영구 지시 또는 N사이클 한정 지시를 선택할 수 있습니다.</p>
+                  <h3 className="font-semibold text-zinc-100 mb-2">Instructions</h3>
+                  <p className="text-zinc-400 text-xs">Issue new directions. Choose between permanent instructions or instructions limited to N cycles.</p>
                 </div>
               </div>
 
               <InfoBox>
-                세션이 실행 중일 때 보고서 페이지는 <strong>30초마다 자동 새로고침</strong>됩니다.
-                수동으로 새로고침할 필요 없이 최신 상태를 실시간으로 확인할 수 있습니다.
+                While a session is running, the Report page <strong>auto-refreshes every 30 seconds</strong>.
+                You can view the latest status in real-time without manually refreshing.
               </InfoBox>
             </div>
           </section>
@@ -624,7 +624,7 @@ Reviewer: 코드 리뷰
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
             className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
           >
-            맨 위로 돌아가기
+            Back to top
           </button>
         </div>
       </div>

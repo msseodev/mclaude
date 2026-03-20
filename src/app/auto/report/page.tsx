@@ -698,7 +698,7 @@ export default function AutoReportPage() {
               id="report-instruction"
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
-              placeholder="새로운 작업 방향이나 지시사항을 입력하세요..."
+              placeholder="Enter a new direction or instruction..."
               rows={4}
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
@@ -714,14 +714,14 @@ export default function AutoReportPage() {
                 className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
               />
               <label htmlFor="report-permanent" className="text-sm text-gray-700">
-                영구 적용
+                Permanent
               </label>
             </div>
 
             {!isPermanent && (
               <div className="flex items-center gap-2">
                 <label htmlFor="report-cycle-count" className="text-sm text-gray-700">
-                  사이클 수:
+                  Cycle count:
                 </label>
                 <input
                   id="report-cycle-count"
@@ -741,7 +741,7 @@ export default function AutoReportPage() {
               loading={submitting}
               disabled={!instruction.trim()}
             >
-              전송
+              Submit
             </Button>
           </div>
         </div>
