@@ -66,8 +66,49 @@ const INLINE_STATUS_OPTIONS: FindingStatus[] = [
   'duplicate',
 ];
 
+const SORT_OPTIONS: { label: string; value: string }[] = [
+  { label: 'Priority', value: 'priority' },
+  { label: 'Status', value: 'status' },
+  { label: 'Category', value: 'category' },
+  { label: 'Title', value: 'title' },
+  { label: 'Retries', value: 'retries' },
+  { label: 'Created', value: 'created' },
+];
+
+const STORAGE_KEY = 'mclaude_findings_prefs';
+
+function loadPrefs(): { status: string; priority: string; category: string; sortBy: string; sortDir: 'asc' | 'desc' } {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return { status: '', priority: '', category: '', sortBy: 'priority', sortDir: 'asc' };
+}
+
+function savePrefs(prefs: { status: string; priority: string; category: string; sortBy: string; sortDir: string }) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
+}
+
 function formatStatusLabel(status: string): string {
   return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const PRIORITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+const STATUS_ORDER: Record<string, number> = { open: 0, in_progress: 1, resolved: 2, wont_fix: 3, duplicate: 4 };
+
+function sortFindings(items: AutoFinding[], sortBy: string, sortDir: 'asc' | 'desc'): AutoFinding[] {
+  const dir = sortDir === 'asc' ? 1 : -1;
+  return [...items].sort((a, b) => {
+    switch (sortBy) {
+      case 'priority': return dir * ((PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9));
+      case 'status': return dir * ((STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
+      case 'category': return dir * a.category.localeCompare(b.category);
+      case 'title': return dir * a.title.localeCompare(b.title);
+      case 'retries': return dir * (a.retry_count - b.retry_count);
+      case 'created': return dir * a.created_at.localeCompare(b.created_at);
+      default: return 0;
+    }
+  });
 }
 
 export default function FindingsPage() {
@@ -75,15 +116,36 @@ export default function FindingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedFinding, setSelectedFinding] = useState<AutoFinding | null>(null);
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
 
-  // Filter state
+  // Filter & sort state (loaded from localStorage)
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
+  const [sortBy, setSortBy] = useState('priority');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  // Load saved prefs on mount
+  useEffect(() => {
+    const prefs = loadPrefs();
+    setFilterStatus(prefs.status);
+    setFilterPriority(prefs.priority);
+    setFilterCategory(prefs.category);
+    setSortBy(prefs.sortBy);
+    setSortDir(prefs.sortDir);
+    setPrefsLoaded(true);
+  }, []);
+
+  // Save prefs whenever they change
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    savePrefs({ status: filterStatus, priority: filterPriority, category: filterCategory, sortBy, sortDir });
+  }, [filterStatus, filterPriority, filterCategory, sortBy, sortDir, prefsLoaded]);
 
   const { showToast } = useToast();
 
   const fetchFindings = useCallback(() => {
+    if (!prefsLoaded) return;
     setError(null);
     const params = new URLSearchParams();
     if (filterStatus) params.set('status', filterStatus);
@@ -101,12 +163,14 @@ export default function FindingsPage() {
         setError('Failed to load findings. Please try again.');
       })
       .finally(() => setLoading(false));
-  }, [filterStatus, filterPriority, filterCategory]);
+  }, [filterStatus, filterPriority, filterCategory, prefsLoaded]);
 
   useEffect(() => {
     setLoading(true);
     fetchFindings();
   }, [fetchFindings]);
+
+  const sortedFindings = sortFindings(findings, sortBy, sortDir);
 
   async function updateStatus(id: string, newStatus: FindingStatus) {
     try {
@@ -209,6 +273,30 @@ export default function FindingsPage() {
             ))}
           </select>
         </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          <label className="mr-1.5 text-sm font-medium text-gray-600">
+            Sort
+          </label>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+            className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+            title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+          >
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -217,7 +305,7 @@ export default function FindingsPage() {
           <div className="px-6 py-12 text-center text-sm text-gray-500">
             Loading...
           </div>
-        ) : findings.length === 0 ? (
+        ) : sortedFindings.length === 0 ? (
           <div className="px-6 py-12 text-center text-sm text-gray-500">
             No findings found.
           </div>
@@ -250,7 +338,7 @@ export default function FindingsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {findings.map((finding) => (
+                {sortedFindings.map((finding) => (
                   <tr key={finding.id} className="hover:bg-gray-50">
                     <td className="px-6 py-3">
                       <Badge variant={priorityBadgeVariant(finding.priority)}>
