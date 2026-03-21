@@ -22,12 +22,19 @@ interface RecentCycle {
   duration_ms: number | null;
 }
 
+interface ParallelAgentInfo {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+}
+
 interface ParallelCycleInfo {
   id: string;
   number: number;
   findingTitle: string;
   agentName: string;
   status: 'running' | 'completed' | 'failed';
+  agents: ParallelAgentInfo[];
 }
 
 export default function AutoDashboardPage() {
@@ -217,6 +224,7 @@ export default function AutoDashboardPage() {
                   findingTitle,
                   agentName: '',
                   status: 'running',
+                  agents: [],
                 },
               ];
             });
@@ -295,9 +303,13 @@ export default function AutoDashboardPage() {
           if (isParallel && cycleId) {
             appendToCycleEntries(cycleId, entry);
             setParallelCycles((prev) =>
-              prev.map((c) =>
-                c.id === cycleId ? { ...c, agentName } : c
-              )
+              prev.map((c) => {
+                if (c.id !== cycleId) return c;
+                const agents = c.agents.some(a => a.id === agentId)
+                  ? c.agents.map(a => a.id === agentId ? { ...a, status: 'running' as const } : a)
+                  : [...c.agents, { id: agentId, name: agentName, status: 'running' as const }];
+                return { ...c, agentName, agents };
+              })
             );
           } else {
             setCurrentAgentId(agentId);
@@ -315,6 +327,13 @@ export default function AutoDashboardPage() {
 
           if (isParallel && cycleId) {
             appendToCycleEntries(cycleId, entry);
+            setParallelCycles((prev) =>
+              prev.map((c) =>
+                c.id === cycleId
+                  ? { ...c, agents: c.agents.map(a => a.id === agentId ? { ...a, status: 'completed' as const } : a) }
+                  : c
+              )
+            );
           } else {
             setPipelineAgents(prev => prev.map(a =>
               a.id === agentId ? { ...a, status: 'completed' } : a
@@ -331,6 +350,13 @@ export default function AutoDashboardPage() {
 
           if (isParallel && cycleId) {
             appendToCycleEntries(cycleId, entry);
+            setParallelCycles((prev) =>
+              prev.map((c) =>
+                c.id === cycleId
+                  ? { ...c, agents: c.agents.map(a => a.id === agentId ? { ...a, status: 'failed' as const } : a) }
+                  : c
+              )
+            );
           } else {
             setPipelineAgents(prev => prev.map(a =>
               a.id === agentId ? { ...a, status: 'failed' } : a
@@ -1200,6 +1226,7 @@ function ParallelBatchViewer({
   autoScrollRef: React.MutableRefObject<boolean>;
 }) {
   const activeCycleId = activeTab ?? (cycles.length > 0 ? cycles[0].id : null);
+  const activeCycle = cycles.find(c => c.id === activeCycleId) ?? null;
   const activeEntries = activeCycleId ? (entriesByCycle[activeCycleId] ?? []) : [];
 
   function handleScroll() {
@@ -1274,6 +1301,26 @@ function ParallelBatchViewer({
           </button>
         ))}
       </div>
+
+      {/* Agent progress for active tab */}
+      {activeCycle && activeCycle.agents.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1">
+          {activeCycle.agents.map((agent) => (
+            <span
+              key={agent.id}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium ${
+                agent.status === 'running' ? 'bg-blue-100 text-blue-800 ring-1 ring-blue-300'
+                : agent.status === 'completed' ? 'bg-green-50 text-green-700'
+                : agent.status === 'failed' ? 'bg-red-50 text-red-700'
+                : 'bg-gray-100 text-gray-600'
+              }`}
+            >
+              <span>{agent.status === 'completed' ? '\u2705' : agent.status === 'running' ? '\u23F3' : agent.status === 'failed' ? '\u274C' : '\u2B1C'}</span>
+              <span>{agent.name}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Output viewer for active tab */}
       <div

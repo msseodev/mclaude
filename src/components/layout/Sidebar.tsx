@@ -25,11 +25,11 @@ const autoNavItems = [
   { href: '/auto/findings', label: 'Findings', icon: SearchIcon },
   { href: '/auto/agents', label: 'Agents', icon: UsersIcon },
   { href: '/auto/cycles', label: 'Cycles', icon: RefreshIcon },
-  { href: '/auto/report', label: '보고서', icon: ReportIcon },
-  { href: '/auto/workflow', label: '워크플로우', icon: WorkflowIcon },
+  { href: '/auto/report', label: 'Report', icon: ReportIcon },
+  { href: '/auto/workflow', label: 'Workflow', icon: WorkflowIcon },
   { href: '/auto/history', label: 'History', icon: ClockIcon },
   { href: '/auto/settings', label: 'Settings', icon: GearIcon },
-  { href: '/auto/guide', label: '가이드', icon: GuideIcon },
+  { href: '/auto/guide', label: 'Guide', icon: GuideIcon },
 ];
 
 const chatNavItems = [
