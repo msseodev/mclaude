@@ -89,19 +89,67 @@ export class ParallelCycleCoordinator {
       // Create a modified session with worktree path as target_project
       const worktreeSession = { ...this.session, target_project: task.worktreePath };
 
+      // Wrap emit to inject cycleId into every event for parallel routing
+      const cycleEmit = (event: AutoSSEEvent): void => {
+        this.emit({
+          ...event,
+          data: { ...event.data, cycleId: task.cycleId },
+        });
+      };
+
+      // Emit cycle_start for this parallel cycle
+      cycleEmit({
+        type: 'cycle_start',
+        data: {
+          cycleId: task.cycleId,
+          cycleNumber: task.cycleNumber,
+          phase: 'pipeline',
+          findingId: task.finding.id,
+          findingTitle: task.finding.title,
+          pipelineType,
+          parallel: true,
+        },
+        timestamp: new Date().toISOString(),
+      });
+
       const executor = new PipelineExecutor(
         worktreeSession,
         task.cycleId,
         task.cycleNumber,
-        this.emit,
+        cycleEmit,
         task.finding,
         pipelineType,
       );
 
       try {
         const result = await executor.execute();
+
+        // Emit cycle_complete/cycle_failed for this parallel cycle
+        cycleEmit({
+          type: result.success ? 'cycle_complete' : 'cycle_failed',
+          data: {
+            cycleId: task.cycleId,
+            cycleNumber: task.cycleNumber,
+            phase: 'pipeline',
+            cost_usd: result.totalCostUsd,
+            duration_ms: result.totalDurationMs,
+            parallel: true,
+          },
+          timestamp: new Date().toISOString(),
+        });
+
         return { task, result };
       } catch {
+        cycleEmit({
+          type: 'cycle_failed',
+          data: {
+            cycleId: task.cycleId,
+            cycleNumber: task.cycleNumber,
+            phase: 'pipeline',
+            parallel: true,
+          },
+          timestamp: new Date().toISOString(),
+        });
         return { task, result: null as PipelineResult | null };
       }
     });

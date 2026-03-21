@@ -22,6 +22,14 @@ interface RecentCycle {
   duration_ms: number | null;
 }
 
+interface ParallelCycleInfo {
+  id: string;
+  number: number;
+  findingTitle: string;
+  agentName: string;
+  status: 'running' | 'completed' | 'failed';
+}
+
 export default function AutoDashboardPage() {
   const { status, refresh } = useAutoStatus();
   const { showToast } = useToast();
@@ -37,6 +45,12 @@ export default function AutoDashboardPage() {
   // Pipeline state
   const [pipelineAgents, setPipelineAgents] = useState<Array<{ id: string; name: string; status: string }>>([]);
   const [currentAgentId, setCurrentAgentId] = useState<string | null>(null);
+
+  // Parallel batch state
+  const [isParallelBatch, setIsParallelBatch] = useState(false);
+  const [parallelCycles, setParallelCycles] = useState<ParallelCycleInfo[]>([]);
+  const [entriesByCycle, setEntriesByCycle] = useState<Record<string, Array<{ type: string; text: string }>>>({});
+  const [activeParallelTab, setActiveParallelTab] = useState<string | null>(null);
 
   const outputRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -72,58 +86,160 @@ export default function AutoDashboardPage() {
     fetchCyclesRef.current = fetchRecentCycles;
   }, [fetchRecentCycles]);
 
+  // Helper: append an entry to a specific cycle's entries (for parallel mode)
+  const appendToCycleEntries = useCallback(
+    (cycleId: string, entry: { type: string; text: string }) => {
+      setEntriesByCycle((prev) => {
+        const existing = prev[cycleId] ?? [];
+        const next = [...existing, entry];
+        return {
+          ...prev,
+          [cycleId]: next.length > MAX_OUTPUT_ENTRIES ? next.slice(-MAX_OUTPUT_ENTRIES) : next,
+        };
+      });
+    },
+    []
+  );
+
+  // Helper: coalesce text_delta into a cycle's entries (for parallel mode)
+  const appendTextToCycleEntries = useCallback(
+    (cycleId: string, text: string) => {
+      setEntriesByCycle((prev) => {
+        const existing = prev[cycleId] ?? [];
+        if (existing.length > 0 && existing[existing.length - 1].type === 'text') {
+          const updated = [...existing];
+          updated[updated.length - 1] = {
+            type: 'text',
+            text: updated[updated.length - 1].text + text,
+          };
+          return {
+            ...prev,
+            [cycleId]: updated.length > MAX_OUTPUT_ENTRIES ? updated.slice(-MAX_OUTPUT_ENTRIES) : updated,
+          };
+        }
+        const next = [...existing, { type: 'text', text }];
+        return {
+          ...prev,
+          [cycleId]: next.length > MAX_OUTPUT_ENTRIES ? next.slice(-MAX_OUTPUT_ENTRIES) : next,
+        };
+      });
+    },
+    []
+  );
+
+  // Use a ref to track parallel state inside the SSE callback without stale closures
+  const isParallelBatchRef = useRef(false);
+  useEffect(() => {
+    isParallelBatchRef.current = isParallelBatch;
+  }, [isParallelBatch]);
+
   // SSE event handler
   const handleSSEEvent = useCallback(
     (event: AutoSSEEvent) => {
+      const cycleId = event.data.cycleId ? String(event.data.cycleId) : null;
+      const isParallel = isParallelBatchRef.current;
+
       switch (event.type) {
+        case 'parallel_batch_start': {
+          setIsParallelBatch(true);
+          isParallelBatchRef.current = true;
+          setParallelCycles([]);
+          setEntriesByCycle({});
+          setActiveParallelTab(null);
+          setOutput([]);
+          break;
+        }
+        case 'parallel_batch_complete': {
+          setIsParallelBatch(false);
+          isParallelBatchRef.current = false;
+          refresh();
+          fetchCyclesRef.current();
+          break;
+        }
         case 'text_delta': {
           const text = String(event.data.text ?? '');
-          setOutput((prev) => {
-            // Coalesce consecutive text entries
-            if (prev.length > 0 && prev[prev.length - 1].type === 'text') {
-              const updated = [...prev];
-              updated[updated.length - 1] = {
-                type: 'text',
-                text: updated[updated.length - 1].text + text,
-              };
-              return updated.length > MAX_OUTPUT_ENTRIES
-                ? updated.slice(-MAX_OUTPUT_ENTRIES)
-                : updated;
-            }
-            const next = [...prev, { type: 'text', text }];
-            return next.length > MAX_OUTPUT_ENTRIES
-              ? next.slice(-MAX_OUTPUT_ENTRIES)
-              : next;
-          });
+          if (isParallel && cycleId) {
+            appendTextToCycleEntries(cycleId, text);
+          } else {
+            setOutput((prev) => {
+              if (prev.length > 0 && prev[prev.length - 1].type === 'text') {
+                const updated = [...prev];
+                updated[updated.length - 1] = {
+                  type: 'text',
+                  text: updated[updated.length - 1].text + text,
+                };
+                return updated.length > MAX_OUTPUT_ENTRIES
+                  ? updated.slice(-MAX_OUTPUT_ENTRIES)
+                  : updated;
+              }
+              const next = [...prev, { type: 'text', text }];
+              return next.length > MAX_OUTPUT_ENTRIES
+                ? next.slice(-MAX_OUTPUT_ENTRIES)
+                : next;
+            });
+          }
           break;
         }
         case 'tool_start': {
           const name = String(event.data.name ?? 'tool');
-          setOutput((prev) => [
-            ...prev,
-            { type: 'tool_start', text: `--- Tool: ${name} ---` },
-          ]);
+          const entry = { type: 'tool_start', text: `--- Tool: ${name} ---` };
+          if (isParallel && cycleId) {
+            appendToCycleEntries(cycleId, entry);
+          } else {
+            setOutput((prev) => [...prev, entry]);
+          }
           break;
         }
         case 'tool_end': {
           const name = String(event.data.name ?? 'tool');
-          setOutput((prev) => [
-            ...prev,
-            { type: 'tool_end', text: `--- End: ${name} ---` },
-          ]);
+          const entry = { type: 'tool_end', text: `--- End: ${name} ---` };
+          if (isParallel && cycleId) {
+            appendToCycleEntries(cycleId, entry);
+          } else {
+            setOutput((prev) => [...prev, entry]);
+          }
           break;
         }
         case 'cycle_start': {
           const cycleNumber = event.data.cycleNumber ?? event.data.cycle_number ?? '?';
           const phase = event.data.phase ?? '';
-          setOutput([
-            { type: 'cycle_start', text: `\n========== Cycle #${cycleNumber} — ${phase === 'pipeline' ? 'Pipeline' : `Phase: ${phase}`} ==========\n` },
-          ]);
-          // Initialize pipeline agents from status
-          if (phase === 'pipeline') {
-            refresh().then(() => {
-              // Pipeline agents will be set from status via useEffect
+          const isParallelCycle = !!event.data.parallel;
+
+          if (isParallelCycle && cycleId) {
+            const findingTitle = String(event.data.findingTitle ?? '');
+            setParallelCycles((prev) => {
+              if (prev.some((c) => c.id === cycleId)) return prev;
+              return [
+                ...prev,
+                {
+                  id: cycleId,
+                  number: Number(cycleNumber),
+                  findingTitle,
+                  agentName: '',
+                  status: 'running',
+                },
+              ];
             });
+            setEntriesByCycle((prev) => ({
+              ...prev,
+              [cycleId]: [
+                {
+                  type: 'cycle_start',
+                  text: `\n========== Cycle #${cycleNumber} — Pipeline ==========\n`,
+                },
+              ],
+            }));
+            // Auto-select first tab
+            setActiveParallelTab((prev) => prev ?? cycleId);
+          } else {
+            setOutput([
+              { type: 'cycle_start', text: `\n========== Cycle #${cycleNumber} — ${phase === 'pipeline' ? 'Pipeline' : `Phase: ${phase}`} ==========\n` },
+            ]);
+            if (phase === 'pipeline') {
+              refresh().then(() => {
+                // Pipeline agents will be set from status via useEffect
+              });
+            }
           }
           refresh();
           break;
@@ -132,10 +248,25 @@ export default function AutoDashboardPage() {
         case 'cycle_failed': {
           const label = event.type === 'cycle_complete' ? 'COMPLETED' : 'FAILED';
           const cycleNumber = event.data.cycleNumber ?? event.data.cycle_number ?? '?';
-          setOutput((prev) => [
-            ...prev,
-            { type: event.type, text: `\n========== ${label}: Cycle #${cycleNumber} ==========\n` },
-          ]);
+          const isParallelCycle = !!event.data.parallel;
+
+          if (isParallelCycle && cycleId) {
+            const newStatus = event.type === 'cycle_complete' ? 'completed' : 'failed';
+            setParallelCycles((prev) =>
+              prev.map((c) =>
+                c.id === cycleId ? { ...c, status: newStatus as 'completed' | 'failed' } : c
+              )
+            );
+            appendToCycleEntries(cycleId, {
+              type: event.type,
+              text: `\n========== ${label}: Cycle #${cycleNumber} ==========\n`,
+            });
+          } else {
+            setOutput((prev) => [
+              ...prev,
+              { type: event.type, text: `\n========== ${label}: Cycle #${cycleNumber} ==========\n` },
+            ]);
+          }
           refresh();
           fetchCyclesRef.current();
           break;
@@ -147,47 +278,77 @@ export default function AutoDashboardPage() {
           break;
         case 'phase_change': {
           const phase = event.data.phase ?? '';
-          setOutput((prev) => [
-            ...prev,
-            { type: 'phase_change', text: `\n--- Phase: ${phase} ---\n` },
-          ]);
+          const entry = { type: 'phase_change', text: `\n--- Phase: ${phase} ---\n` };
+          if (isParallel && cycleId) {
+            appendToCycleEntries(cycleId, entry);
+          } else {
+            setOutput((prev) => [...prev, entry]);
+          }
           refresh();
           break;
         }
         case 'agent_start': {
           const agentId = String(event.data.agentId ?? '');
           const agentName = String(event.data.agentName ?? '');
-          setCurrentAgentId(agentId);
-          setPipelineAgents(prev => prev.map(a =>
-            a.id === agentId ? { ...a, status: 'running' } : a
-          ));
-          setOutput(prev => [...prev, { type: 'agent_start', text: `\n--- Agent: ${agentName} (running) ---\n` }]);
+          const entry = { type: 'agent_start', text: `\n--- Agent: ${agentName} (running) ---\n` };
+
+          if (isParallel && cycleId) {
+            appendToCycleEntries(cycleId, entry);
+            setParallelCycles((prev) =>
+              prev.map((c) =>
+                c.id === cycleId ? { ...c, agentName } : c
+              )
+            );
+          } else {
+            setCurrentAgentId(agentId);
+            setPipelineAgents(prev => prev.map(a =>
+              a.id === agentId ? { ...a, status: 'running' } : a
+            ));
+            setOutput(prev => [...prev, entry]);
+          }
           break;
         }
         case 'agent_complete': {
           const agentId = String(event.data.agentId ?? '');
           const agentName = String(event.data.agentName ?? '');
-          setPipelineAgents(prev => prev.map(a =>
-            a.id === agentId ? { ...a, status: 'completed' } : a
-          ));
-          setOutput(prev => [...prev, { type: 'agent_complete', text: `\n--- Agent: ${agentName} (completed) ---\n` }]);
+          const entry = { type: 'agent_complete', text: `\n--- Agent: ${agentName} (completed) ---\n` };
+
+          if (isParallel && cycleId) {
+            appendToCycleEntries(cycleId, entry);
+          } else {
+            setPipelineAgents(prev => prev.map(a =>
+              a.id === agentId ? { ...a, status: 'completed' } : a
+            ));
+            setOutput(prev => [...prev, entry]);
+          }
           refresh();
           break;
         }
         case 'agent_failed': {
           const agentId = String(event.data.agentId ?? '');
           const agentName = String(event.data.agentName ?? '');
-          setPipelineAgents(prev => prev.map(a =>
-            a.id === agentId ? { ...a, status: 'failed' } : a
-          ));
-          setOutput(prev => [...prev, { type: 'agent_failed', text: `\n--- Agent: ${agentName} (FAILED) ---\n` }]);
+          const entry = { type: 'agent_failed', text: `\n--- Agent: ${agentName} (FAILED) ---\n` };
+
+          if (isParallel && cycleId) {
+            appendToCycleEntries(cycleId, entry);
+          } else {
+            setPipelineAgents(prev => prev.map(a =>
+              a.id === agentId ? { ...a, status: 'failed' } : a
+            ));
+            setOutput(prev => [...prev, entry]);
+          }
           refresh();
           break;
         }
         case 'review_iteration': {
           const iteration = event.data.iteration ?? '?';
           const maxIterations = event.data.maxIterations ?? '?';
-          setOutput(prev => [...prev, { type: 'review_iteration', text: `\n--- Review Iteration ${iteration}/${maxIterations} ---\n` }]);
+          const entry = { type: 'review_iteration', text: `\n--- Review Iteration ${iteration}/${maxIterations} ---\n` };
+          if (isParallel && cycleId) {
+            appendToCycleEntries(cycleId, entry);
+          } else {
+            setOutput(prev => [...prev, entry]);
+          }
           break;
         }
         case 'user_prompt_added': {
@@ -204,11 +365,16 @@ export default function AutoDashboardPage() {
           break;
       }
     },
-    [refresh, showToast]
+    [refresh, showToast, appendToCycleEntries, appendTextToCycleEntries]
   );
 
   const handleReconnect = useCallback(() => {
     setOutput([]); // Clear on reconnection to prevent duplicates
+    setIsParallelBatch(false);
+    isParallelBatchRef.current = false;
+    setParallelCycles([]);
+    setEntriesByCycle({});
+    setActiveParallelTab(null);
     refresh();
   }, [refresh]);
 
@@ -223,13 +389,13 @@ export default function AutoDashboardPage() {
     fetchRecentCycles();
   }, [fetchRecentCycles]);
 
-  // Auto-scroll output
+  // Auto-scroll output (triggers on single-stream output or parallel entries)
   useEffect(() => {
     const el = outputRef.current;
     if (el && autoScrollRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [output]);
+  }, [output, entriesByCycle, activeParallelTab]);
 
   // Control handlers
   async function handleStart(targetProject?: string, initialPrompt?: string) {
@@ -248,6 +414,11 @@ export default function AutoDashboardPage() {
       showToast('Autonomous mode started', 'success');
       setOutput([]);
       setPipelineAgents([]);
+      setIsParallelBatch(false);
+      isParallelBatchRef.current = false;
+      setParallelCycles([]);
+      setEntriesByCycle({});
+      setActiveParallelTab(null);
       await refresh();
     } catch {
       showToast('Failed to start autonomous mode', 'error');
@@ -442,9 +613,18 @@ export default function AutoDashboardPage() {
         />
       )}
 
-      {/* Current Cycle Panel / Pipeline Viewer */}
+      {/* Current Cycle Panel / Pipeline Viewer / Parallel Tabs */}
       {sessionStatus !== 'idle' && (
-        pipelineAgents.length > 0 ? (
+        isParallelBatch && parallelCycles.length > 0 ? (
+          <ParallelBatchViewer
+            cycles={parallelCycles}
+            entriesByCycle={entriesByCycle}
+            activeTab={activeParallelTab}
+            onTabChange={setActiveParallelTab}
+            outputRef={outputRef}
+            autoScrollRef={autoScrollRef}
+          />
+        ) : pipelineAgents.length > 0 ? (
           <PipelineViewer
             cycleNumber={status?.currentCycle ?? 0}
             agents={pipelineAgents}
@@ -998,6 +1178,126 @@ function OutputViewer({
           )
         )
       )}
+    </div>
+  );
+}
+
+// --- ParallelBatchViewer ---
+
+function ParallelBatchViewer({
+  cycles,
+  entriesByCycle,
+  activeTab,
+  onTabChange,
+  outputRef,
+  autoScrollRef,
+}: {
+  cycles: ParallelCycleInfo[];
+  entriesByCycle: Record<string, Array<{ type: string; text: string }>>;
+  activeTab: string | null;
+  onTabChange: (id: string) => void;
+  outputRef: React.RefObject<HTMLDivElement | null>;
+  autoScrollRef: React.MutableRefObject<boolean>;
+}) {
+  const activeCycleId = activeTab ?? (cycles.length > 0 ? cycles[0].id : null);
+  const activeEntries = activeCycleId ? (entriesByCycle[activeCycleId] ?? []) : [];
+
+  function handleScroll() {
+    const el = outputRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    autoScrollRef.current = atBottom;
+  }
+
+  const statusColor = (s: ParallelCycleInfo['status']) => {
+    switch (s) {
+      case 'running': return 'bg-blue-400';
+      case 'completed': return 'bg-green-400';
+      case 'failed': return 'bg-red-400';
+    }
+  };
+
+  const colorForType = (type: string) => {
+    switch (type) {
+      case 'tool_start':
+      case 'tool_end':
+        return 'text-blue-400';
+      case 'cycle_start':
+      case 'phase_change':
+      case 'agent_start':
+        return 'text-green-400 font-bold';
+      case 'cycle_complete':
+      case 'agent_complete':
+        return 'text-green-400';
+      case 'cycle_failed':
+      case 'agent_failed':
+        return 'text-red-400';
+      case 'review_iteration':
+        return 'text-yellow-400';
+      default:
+        return 'text-gray-100';
+    }
+  };
+
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex items-center gap-2">
+        <h2 className="text-sm font-medium text-gray-700">
+          Parallel Batch — {cycles.length} cycles
+        </h2>
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex border-b border-gray-700 mb-2">
+        {cycles.map((cycle) => (
+          <button
+            key={cycle.id}
+            onClick={() => onTabChange(cycle.id)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeCycleId === cycle.id
+                ? 'border-blue-500 text-blue-400'
+                : 'border-transparent text-gray-400 hover:text-gray-300'
+            }`}
+          >
+            Cycle {cycle.number}
+            {cycle.findingTitle && (
+              <span className="ml-1 text-xs opacity-75">
+                {cycle.findingTitle.length > 30
+                  ? cycle.findingTitle.slice(0, 30) + '...'
+                  : cycle.findingTitle}
+              </span>
+            )}
+            {!cycle.findingTitle && cycle.agentName && (
+              <span className="ml-1 text-xs opacity-75">{cycle.agentName}</span>
+            )}
+            <span className={`ml-2 inline-block h-2 w-2 rounded-full ${statusColor(cycle.status)}`} />
+          </button>
+        ))}
+      </div>
+
+      {/* Output viewer for active tab */}
+      <div
+        ref={outputRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-lg p-4 font-mono text-sm leading-relaxed text-gray-100"
+        style={{ backgroundColor: '#1E1E1E', minHeight: 300 }}
+      >
+        {activeEntries.length === 0 ? (
+          <p className="text-gray-500">
+            Waiting for output...
+          </p>
+        ) : (
+          activeEntries.map((entry, i) =>
+            entry.type === 'text' ? (
+              <MarkdownOutput key={i} text={entry.text} />
+            ) : (
+              <span key={i} className={colorForType(entry.type)}>
+                {entry.text}
+              </span>
+            )
+          )
+        )}
+      </div>
     </div>
   );
 }
