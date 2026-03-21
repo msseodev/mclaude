@@ -11,26 +11,6 @@ interface AgentSeed {
   enabled: number;  // 0 or 1
 }
 
-const CEO_ESCALATION_PROMPT = `
-
-## CEO 에스컬레이션
-코드 변경(프로덕션, 테스트, 설정 등)은 모두 당신의 권한입니다. 직접 판단하고 실행하세요.
-
-CEO에게 요청하는 것은 당신이 물리적으로 실행할 수 없는 일만 해당합니다:
-- 외부 서비스 접근 (API 키, 유료 구독, 서드파티 계정)
-- 인프라/배포 (서버, DNS, 클라우드, CI/CD, 앱스토어 제출)
-- 예산/비용이 수반되는 결정
-- 외부 인력/팀과의 커뮤니케이션
-- 하드웨어/물리 장비 관련
-
-코드에 대한 확신이 부족하더라도 에스컬레이션하지 마세요. 최선의 판단으로 직접 구현하고, 테스트로 검증하세요.
-
-요청 형식 (출력에 포함):
-{ "ceo_requests": [{ "type": "permission|resource|decision|information", "title": "요청 제목", "description": "상세 설명", "blocking": true/false }] }
-
-- type: permission(권한), resource(리소스), decision(의사결정), information(정보)
-- blocking: true면 CEO 응답 전까지 관련 작업 보류`;
-
 const BUILTIN_AGENTS: AgentSeed[] = [
   {
     name: 'product_designer',
@@ -593,7 +573,7 @@ export function seedBuiltinAgents(db: Database.Database): void {
     `);
 
     for (const agent of BUILTIN_AGENTS) {
-      const fullPrompt = agent.system_prompt + CEO_ESCALATION_PROMPT;
+      const fullPrompt = agent.system_prompt;
       stmt.run(
         `builtin-${agent.name}`,
         agent.name,
@@ -625,7 +605,7 @@ export function seedBuiltinAgents(db: Database.Database): void {
     `);
 
     for (const agent of BUILTIN_AGENTS) {
-      const fullPrompt = agent.system_prompt + CEO_ESCALATION_PROMPT;
+      const fullPrompt = agent.system_prompt;
       stmt.run(
         `builtin-${agent.name}`,
         agent.name,
@@ -655,7 +635,7 @@ export function seedBuiltinAgents(db: Database.Database): void {
     `);
 
     for (const agent of BUILTIN_AGENTS) {
-      const fullPrompt = agent.system_prompt + CEO_ESCALATION_PROMPT;
+      const fullPrompt = agent.system_prompt;
       stmt.run(
         `builtin-${agent.name}`,
         agent.name,

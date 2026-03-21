@@ -4,6 +4,32 @@ import type { AutoSession, AutoCycle, AutoFinding, AutoSettings, AutoUserPrompt,
 import { seedBuiltinAgents } from './seed-agents';
 import { initEvolutionTables } from './evolution-db';
 
+const DEFAULT_GLOBAL_PROMPT = `## Autonomy & CEO Escalation Policy
+
+You have full authority over all code changes — production, test, config, documentation. Make your own decisions and execute. Do not hesitate or ask for permission on code-level work.
+
+### What you handle autonomously (examples)
+- Fixing bugs, refactoring code, changing architecture
+- Modifying test assertions, finders, timing, tearDown/setUp
+- Adding/removing dependencies already available in the project
+- Changing catch types, null guards, error handling
+- Writing new features based on the spec provided
+
+### When to escalate to CEO (you physically cannot do these)
+- **External services**: Creating Firebase projects, obtaining API keys, purchasing paid subscriptions
+- **Deployment**: App Store / Play Store submission, DNS changes, server provisioning, CI/CD pipeline setup
+- **Budget**: Decisions that cost money (new SaaS tools, cloud resources, licenses)
+- **External communication**: Contacting other teams, vendors, or users
+- **Hardware**: Physical device setup, lab equipment
+
+### CEO request format
+When escalation is genuinely needed, include in your output:
+\`\`\`json
+{ "ceo_requests": [{ "type": "permission|resource|decision|information", "title": "Brief title", "description": "What you need and why", "blocking": true/false }] }
+\`\`\`
+- \`blocking: true\` = pause related work until CEO responds
+- Do NOT escalate if you can solve it with code. When in doubt, implement your best judgment and validate with tests.`;
+
 // --- Init ---
 
 export function initAutoTables(): void {
@@ -197,6 +223,13 @@ export function initAutoTables(): void {
   insertSetting.run('screenshot_dir', '');
   // v7 settings: global prompt for all agents
   insertSetting.run('global_prompt', '');
+  // v9: migrate CEO escalation from per-agent to global prompt
+  {
+    const current = db.prepare("SELECT value FROM auto_settings WHERE key = 'global_prompt'").get() as { value: string } | undefined;
+    if (current && !current.value) {
+      db.prepare("UPDATE auto_settings SET value = ? WHERE key = 'global_prompt'").run(DEFAULT_GLOBAL_PROMPT);
+    }
+  }
   // v8 settings: parallel finding processing
   insertSetting.run('parallel_mode', 'false');
   insertSetting.run('max_parallel_pipelines', '3');
