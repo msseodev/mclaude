@@ -6,7 +6,7 @@ import { caffeinateManager } from '../caffeinate';
 import { getSetting } from '../db';
 import { PipelineExecutor } from './pipeline-executor';
 import type { PipelineResult } from './pipeline-executor';
-import { ParallelCycleCoordinator } from './parallel-coordinator';
+import { WorkerPool } from './parallel-coordinator';
 import { Watchdog } from './watchdog';
 import { summarizeAgentOutputs, generateCommitMessage } from './summarizer';
 import { runCommand } from './command-runner';
@@ -14,7 +14,7 @@ import type { CommandResult } from './command-runner';
 import { scoreCycle } from './cycle-scorer';
 import { checkAndEvolve } from './prompt-evolver';
 import { getVariantHistory, updatePromptVariant } from './evolution-db';
-import type { AutoUserPrompt, AutoSettings, AutoFinding } from './types';
+import type { AutoUserPrompt, AutoSettings } from './types';
 import {
   createAutoSession,
   getAutoSession,
@@ -80,6 +80,7 @@ class CycleEngineImpl {
   private isStopping: boolean = false;
   private codebaseSummaryCache: string | null = null;
   private watchdog: Watchdog = new Watchdog();
+  private workerPool: WorkerPool | null = null;
 
   // SSE listener management (identical pattern to RunManager)
   addListener(listener: (event: AutoSSEEvent) => void): () => void {
@@ -169,6 +170,9 @@ class CycleEngineImpl {
     this.isStopping = true;
     this.watchdog.stop();
 
+    this.workerPool?.stop();
+    this.workerPool = null;
+
     this.pipelineExecutor?.abort();
     this.pipelineExecutor = null;
 
@@ -212,6 +216,9 @@ class CycleEngineImpl {
 
     this.isPaused = true;
     this.watchdog.stop();
+
+    this.workerPool?.stop();
+    this.workerPool = null;
 
     this.pipelineExecutor?.abort();
     this.pipelineExecutor = null;
@@ -592,9 +599,9 @@ class CycleEngineImpl {
     // Sort by priority: P0 > P1 > P2 > P3
     actionableFindings.sort((a, b) => a.priority.localeCompare(b.priority));
 
-    // Parallel mode: process multiple findings at once
+    // Parallel mode: use worker pool to process findings concurrently
     if (settings.parallel_mode && actionableFindings.length >= 2) {
-      await this._processParallelBatch(session, settings, actionableFindings);
+      await this._processParallelWorkerPool(session, settings);
       return;
     }
 
@@ -904,36 +911,21 @@ class CycleEngineImpl {
     this.processNextCycle();
   }
 
-  private async _processParallelBatch(
+  private async _processParallelWorkerPool(
     session: NonNullable<ReturnType<typeof getAutoSession>>,
     settings: AutoSettings,
-    actionableFindings: AutoFinding[],
   ): Promise<void> {
-    const batchSize = Math.min(actionableFindings.length, settings.max_parallel_pipelines);
-    const batchFindings = actionableFindings.slice(0, batchSize);
+    this.workerPool = new WorkerPool(
+      session,
+      this.emit.bind(this),
+      settings.max_parallel_pipelines,
+      this.cycleNumber,
+    );
 
-    const coordinator = new ParallelCycleCoordinator(session, this.emit.bind(this));
-    const result = await coordinator.executeBatch(batchFindings, this.cycleNumber);
+    await this.workerPool.start(); // Blocks until all workers finish (no more findings)
 
-    // Advance cycle number by batch size
-    this.cycleNumber += result.results.length;
-
-    // Update session totals
-    if (this.currentSessionId) {
-      const currentSession = getAutoSession(this.currentSessionId);
-      if (currentSession) {
-        updateAutoSession(this.currentSessionId, {
-          total_cycles: currentSession.total_cycles + result.results.length,
-          total_cost_usd: currentSession.total_cost_usd + result.totalCostUsd,
-        });
-      }
-    }
-
-    // Handle rate limit
-    if (result.abortedByRateLimit) {
-      this.handleRateLimit({ detected: true, retryAfterMs: 300000, message: 'Rate limited during parallel batch', source: 'text_pattern' });
-      return;
-    }
+    this.cycleNumber = this.workerPool.getCycleCount();
+    this.workerPool = null;
 
     // Evolution check
     if (this.currentSessionId && settings.evolution_enabled &&
@@ -948,7 +940,7 @@ class CycleEngineImpl {
     // Write SESSION-STATE.md
     await this.updateStateFile();
 
-    // Continue to next cycle/batch
+    // Continue (will pick up discovery cycle or exit)
     this.processNextCycle();
   }
 
@@ -1260,6 +1252,7 @@ class CycleEngineImpl {
     this.isStopping = false;
     this.retryCount = 0;
     this.codebaseSummaryCache = null;
+    this.workerPool = null;
   }
 
   private async writeCycleDoc(

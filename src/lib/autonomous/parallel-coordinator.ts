@@ -3,301 +3,269 @@ import { PipelineExecutor } from './pipeline-executor';
 import type { PipelineResult } from './pipeline-executor';
 import { GitManager } from './git-manager';
 import { getSetting } from '../db';
-import { createAutoCycle, updateAutoCycle, updateAutoFinding } from './db';
+import {
+  createAutoCycle,
+  updateAutoCycle,
+  updateAutoFinding,
+  getOpenAutoFindings,
+  getAutoSession,
+  updateAutoSession,
+} from './db';
 import type { AutoSession, AutoFinding, AutoSSEEvent, PipelineType } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs/promises';
 
-interface ParallelCycleResult {
-  cycleId: string;
-  findingId: string;
-  pipelineResult: PipelineResult | null;
-  branchName: string;
-  worktreePath: string;
-  merged: boolean;
-  conflicted: boolean;
+interface WorkerState {
+  active: boolean;
+  findingId: string | null;
+  cycleId: string | null;
 }
 
-export interface ParallelBatchResult {
-  batchId: string;
-  results: ParallelCycleResult[];
-  totalCostUsd: number;
-  totalDurationMs: number;
-  abortedByRateLimit: boolean;
-}
+export class WorkerPool {
+  private workers: Map<number, WorkerState> = new Map();
+  private stopped = false;
+  private cycleCounter: number;
+  private activePromises: Map<number, Promise<void>> = new Map();
+  private mergeLock: Promise<void> = Promise.resolve();
 
-export class ParallelCycleCoordinator {
   constructor(
     private session: AutoSession,
     private emit: (event: AutoSSEEvent) => void,
-  ) {}
+    private maxWorkers: number,
+    startCycleNumber: number,
+  ) {
+    this.cycleCounter = startCycleNumber;
+  }
 
-  async executeBatch(
-    findings: AutoFinding[],
-    cycleNumberBase: number,
-  ): Promise<ParallelBatchResult> {
-    const batchId = uuidv4().slice(0, 8);
-    const gitManager = new GitManager(this.session.target_project);
-    const worktreeBase = path.join(this.session.target_project, '.mclaude', 'worktrees', batchId);
-    await fs.mkdir(worktreeBase, { recursive: true });
+  async start(): Promise<void> {
+    // Launch N workers
+    for (let i = 0; i < this.maxWorkers; i++) {
+      this.workers.set(i, { active: false, findingId: null, cycleId: null });
+      this.activePromises.set(i, this.runWorker(i));
+    }
+    // Wait for all workers to finish (they stop when no more findings)
+    await Promise.allSettled([...this.activePromises.values()]);
+  }
 
-    const now = new Date().toISOString();
-    this.emit({
-      type: 'parallel_batch_start',
-      data: { batchId, findingCount: findings.length },
-      timestamp: now,
-    });
+  stop(): void {
+    this.stopped = true;
+  }
 
-    // 1. Create worktrees and cycle records
-    const tasks: Array<{
-      finding: AutoFinding;
-      cycleNumber: number;
-      cycleId: string;
-      branchName: string;
-      worktreePath: string;
-    }> = [];
+  getStatus(): { workers: Array<{ id: number; active: boolean; findingId: string | null; cycleId: string | null }> } {
+    return {
+      workers: [...this.workers.entries()].map(([id, w]) => ({ id, ...w })),
+    };
+  }
 
-    for (let i = 0; i < findings.length; i++) {
-      const finding = findings[i];
-      const cycleNumber = cycleNumberBase + i;
-      const branchName = `auto/parallel-${batchId}-${finding.id.slice(0, 8)}`;
-      const worktreePath = path.join(worktreeBase, finding.id.slice(0, 8));
+  getCycleCount(): number {
+    return this.cycleCounter;
+  }
 
+  private async runWorker(workerId: number): Promise<void> {
+    while (!this.stopped) {
+      // 1. Pick next actionable finding
+      const finding = this.pickNextFinding();
+      if (!finding) break; // No more findings, worker exits
+
+      this.workers.set(workerId, { active: true, findingId: finding.id, cycleId: null });
+
+      // 2. Assign cycle number (atomic increment)
+      const cycleNumber = this.cycleCounter++;
+
+      // 3. Create worktree
+      const gitManager = new GitManager(this.session.target_project);
+      const batchId = uuidv4().slice(0, 8);
+      const branchName = `auto/worker-${workerId}-${batchId}`;
+      const worktreePath = path.join(this.session.target_project, '.mclaude', 'worktrees', `w${workerId}-${batchId}`);
+
+      await fs.mkdir(path.dirname(worktreePath), { recursive: true });
       const ok = await gitManager.createWorktree(branchName, worktreePath);
-      if (!ok) continue;
-
-      // Symlink node_modules, build directories if they exist
+      if (!ok) {
+        updateAutoFinding(finding.id, { status: 'open' });
+        this.workers.set(workerId, { active: false, findingId: null, cycleId: null });
+        continue;
+      }
       await this.symlinkDependencies(this.session.target_project, worktreePath);
 
+      // 4. Create cycle record
       const cycle = createAutoCycle({
         session_id: this.session.id,
         cycle_number: cycleNumber,
         phase: 'pipeline',
         finding_id: finding.id,
       });
+      this.workers.set(workerId, { active: true, findingId: finding.id, cycleId: cycle.id });
 
-      updateAutoFinding(finding.id, { status: 'in_progress' });
-
-      tasks.push({ finding, cycleNumber, cycleId: cycle.id, branchName, worktreePath });
-    }
-
-    // 2. Execute pipelines in parallel
-    const pipelinePromises = tasks.map(async (task) => {
-      const pipelineType: PipelineType = task.finding.category === 'test_failure' ? 'test_fix' : 'fix';
-
-      // Create a modified session with worktree path as target_project
-      const worktreeSession = { ...this.session, target_project: task.worktreePath };
-
-      // Wrap emit to inject cycleId into every event for parallel routing
+      // 5. Emit cycle_start
+      const pipelineType: PipelineType = finding.category === 'test_failure' ? 'test_fix' : 'fix';
       const cycleEmit = (event: AutoSSEEvent): void => {
-        this.emit({
-          ...event,
-          data: { ...event.data, cycleId: task.cycleId },
-        });
+        this.emit({ ...event, data: { ...event.data, cycleId: cycle.id, workerId } });
       };
-
-      // Emit cycle_start for this parallel cycle
       cycleEmit({
         type: 'cycle_start',
         data: {
-          cycleId: task.cycleId,
-          cycleNumber: task.cycleNumber,
+          cycleId: cycle.id,
+          cycleNumber,
           phase: 'pipeline',
-          findingId: task.finding.id,
-          findingTitle: task.finding.title,
+          findingId: finding.id,
+          findingTitle: finding.title,
           pipelineType,
           parallel: true,
         },
         timestamp: new Date().toISOString(),
       });
 
+      // 6. Run pipeline
+      const worktreeSession = { ...this.session, target_project: worktreePath };
       const executor = new PipelineExecutor(
         worktreeSession,
-        task.cycleId,
-        task.cycleNumber,
+        cycle.id,
+        cycleNumber,
         cycleEmit,
-        task.finding,
+        finding,
         pipelineType,
       );
 
+      let pipelineResult: PipelineResult | null = null;
       try {
-        const result = await executor.execute();
-
-        // Emit cycle_complete/cycle_failed for this parallel cycle
+        pipelineResult = await executor.execute();
         cycleEmit({
-          type: result.success ? 'cycle_complete' : 'cycle_failed',
+          type: pipelineResult.success ? 'cycle_complete' : 'cycle_failed',
           data: {
-            cycleId: task.cycleId,
-            cycleNumber: task.cycleNumber,
+            cycleId: cycle.id,
+            cycleNumber,
             phase: 'pipeline',
-            cost_usd: result.totalCostUsd,
-            duration_ms: result.totalDurationMs,
+            cost_usd: pipelineResult.totalCostUsd,
+            duration_ms: pipelineResult.totalDurationMs,
             parallel: true,
           },
           timestamp: new Date().toISOString(),
         });
-
-        return { task, result };
       } catch {
         cycleEmit({
           type: 'cycle_failed',
-          data: {
-            cycleId: task.cycleId,
-            cycleNumber: task.cycleNumber,
-            phase: 'pipeline',
-            parallel: true,
-          },
+          data: { cycleId: cycle.id, cycleNumber, phase: 'pipeline', parallel: true },
           timestamp: new Date().toISOString(),
         });
-        return { task, result: null as PipelineResult | null };
       }
-    });
 
-    const settled = await Promise.allSettled(pipelinePromises);
-
-    // 3. Process results and merge
-    const results: ParallelCycleResult[] = [];
-    let totalCostUsd = 0;
-    let totalDurationMs = 0;
-    let abortedByRateLimit = false;
-
-    // First pass: collect results
-    const completedTasks: Array<{ task: typeof tasks[0]; result: PipelineResult }> = [];
-    for (let idx = 0; idx < settled.length; idx++) {
-      const outcome = settled[idx];
-      if (outcome.status === 'fulfilled' && outcome.value.result) {
-        const { task, result } = outcome.value;
-        totalCostUsd += result.totalCostUsd;
-        totalDurationMs += result.totalDurationMs;
-
-        if (result.abortedByRateLimit) abortedByRateLimit = true;
-
-        updateAutoCycle(task.cycleId, {
-          status: result.success ? 'completed' : 'failed',
-          output: result.finalOutput,
-          cost_usd: result.totalCostUsd,
-          duration_ms: result.totalDurationMs,
+      // 7. Handle result
+      if (pipelineResult?.success) {
+        updateAutoCycle(cycle.id, {
+          status: 'completed',
+          output: pipelineResult.finalOutput,
+          cost_usd: pipelineResult.totalCostUsd,
+          duration_ms: pipelineResult.totalDurationMs,
           completed_at: new Date().toISOString(),
         });
 
-        if (result.success) {
-          completedTasks.push({ task, result });
-        } else {
-          // Failed pipeline - increment retry
-          const f = task.finding;
-          const newRetry = f.retry_count + 1;
-          updateAutoFinding(f.id, {
-            status: newRetry >= f.max_retries ? 'wont_fix' : 'open',
-            retry_count: newRetry,
-          });
-          results.push({
-            cycleId: task.cycleId,
-            findingId: f.id,
-            pipelineResult: result,
-            branchName: task.branchName,
-            worktreePath: task.worktreePath,
-            merged: false,
-            conflicted: false,
-          });
-        }
+        // Commit in worktree
+        const worktreeGit = new GitManager(worktreePath);
+        await worktreeGit.commitAll(`fix: ${finding.title}`);
+
+        // Merge (sequential -- only one worker merges at a time using a lock)
+        await this.mergeWithLock(gitManager, branchName, finding, cycle.id);
       } else {
-        // Promise rejected or null result
-        const task = outcome.status === 'fulfilled' ? outcome.value.task : tasks[idx];
-        if (task) {
-          updateAutoCycle(task.cycleId, {
-            status: 'failed',
-            completed_at: new Date().toISOString(),
-          });
-          updateAutoFinding(task.finding.id, { status: 'open' });
-          results.push({
-            cycleId: task.cycleId,
-            findingId: task.finding.id,
-            pipelineResult: null,
-            branchName: task.branchName,
-            worktreePath: task.worktreePath,
-            merged: false,
-            conflicted: false,
+        updateAutoCycle(cycle.id, {
+          status: 'failed',
+          completed_at: new Date().toISOString(),
+        });
+        const newRetry = finding.retry_count + 1;
+        updateAutoFinding(finding.id, {
+          status: newRetry >= finding.max_retries ? 'wont_fix' : 'open',
+          retry_count: newRetry,
+        });
+      }
+
+      // 8. Update session totals
+      if (pipelineResult) {
+        const currentSession = getAutoSession(this.session.id);
+        if (currentSession) {
+          updateAutoSession(this.session.id, {
+            total_cycles: currentSession.total_cycles + 1,
+            total_cost_usd: currentSession.total_cost_usd + (pipelineResult.totalCostUsd ?? 0),
           });
         }
       }
+
+      // 9. Cleanup worktree
+      await gitManager.removeWorktree(worktreePath);
+      await gitManager.deleteBranch(branchName);
+      try { await fs.rm(worktreePath, { recursive: true }); } catch { /* ignore */ }
+
+      // 10. Rate limit check
+      if (pipelineResult?.abortedByRateLimit) {
+        this.stopped = true;
+        break;
+      }
+
+      this.workers.set(workerId, { active: false, findingId: null, cycleId: null });
     }
 
-    // 4. Sequential merge of successful branches
-    for (const { task, result } of completedTasks) {
-      // First, commit changes in the worktree
-      const worktreeGit = new GitManager(task.worktreePath);
-      await worktreeGit.commitAll(`fix: ${task.finding.title}`);
+    this.workers.set(workerId, { active: false, findingId: null, cycleId: null });
+  }
 
-      // Then merge from main repo
-      const mergeResult = await gitManager.mergeWorktreeBranch(task.branchName);
+  /**
+   * Thread-safe finding picker.
+   * SQLite operations are synchronous in better-sqlite3, so marking as
+   * in_progress is atomic within a single Node.js tick.
+   */
+  private pickNextFinding(): AutoFinding | null {
+    const openFindings = getOpenAutoFindings();
+    const actionable = openFindings.filter(f => f.retry_count < f.max_retries && f.status === 'open');
+    actionable.sort((a, b) => a.priority.localeCompare(b.priority));
+    const finding = actionable[0] ?? null;
+    if (finding) {
+      updateAutoFinding(finding.id, { status: 'in_progress' });
+    }
+    return finding;
+  }
 
+  /**
+   * Merge lock to prevent concurrent git merge operations.
+   * Chains merge operations sequentially using a promise chain so
+   * only one worker merges at a time.
+   */
+  private async mergeWithLock(
+    gitManager: GitManager,
+    branchName: string,
+    finding: AutoFinding,
+    cycleId: string,
+  ): Promise<void> {
+    this.mergeLock = this.mergeLock.then(async () => {
+      const mergeResult = await gitManager.mergeWorktreeBranch(branchName);
       let merged = mergeResult.success;
-      let conflicted = mergeResult.conflicted;
+      const conflicted = mergeResult.conflicted;
 
-      // If merge conflicted, try to resolve with Claude
       if (!merged && conflicted) {
-        const resolved = await this.resolveConflictsWithClaude(gitManager, task);
+        const resolved = await this.resolveConflictsWithClaude(gitManager, { finding, branchName });
         if (resolved) {
           merged = true;
-          conflicted = false;
         } else {
           await gitManager.abortMerge();
         }
       }
 
       if (merged) {
-        updateAutoFinding(task.finding.id, {
+        updateAutoFinding(finding.id, {
           status: 'resolved',
-          resolved_by_cycle_id: task.cycleId,
+          resolved_by_cycle_id: cycleId,
         });
         this.emit({
           type: 'finding_resolved',
-          data: { findingId: task.finding.id, cycleId: task.cycleId },
+          data: { findingId: finding.id, cycleId },
           timestamp: new Date().toISOString(),
         });
       } else {
-        // Failed to merge even after conflict resolution attempt
-        const f = task.finding;
-        const newRetry = f.retry_count + 1;
-        updateAutoFinding(f.id, {
-          status: newRetry >= f.max_retries ? 'wont_fix' : 'open',
+        const newRetry = finding.retry_count + 1;
+        updateAutoFinding(finding.id, {
+          status: newRetry >= finding.max_retries ? 'wont_fix' : 'open',
           retry_count: newRetry,
         });
       }
-
-      results.push({
-        cycleId: task.cycleId,
-        findingId: task.finding.id,
-        pipelineResult: result,
-        branchName: task.branchName,
-        worktreePath: task.worktreePath,
-        merged,
-        conflicted,
-      });
-    }
-
-    // 5. Cleanup worktrees
-    for (const task of tasks) {
-      await gitManager.removeWorktree(task.worktreePath);
-      await gitManager.deleteBranch(task.branchName);
-    }
-    // Remove batch directory
-    try { await fs.rm(worktreeBase, { recursive: true }); } catch { /* ignore */ }
-
-    this.emit({
-      type: 'parallel_batch_complete',
-      data: {
-        batchId,
-        totalCycles: results.length,
-        merged: results.filter(r => r.merged).length,
-        conflicted: results.filter(r => r.conflicted).length,
-        totalCostUsd,
-      },
-      timestamp: new Date().toISOString(),
     });
-
-    return { batchId, results, totalCostUsd, totalDurationMs, abortedByRateLimit };
+    await this.mergeLock;
   }
 
   private async resolveConflictsWithClaude(
