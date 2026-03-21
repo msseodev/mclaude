@@ -259,12 +259,18 @@ export default function AutoDashboardPage() {
           const isParallelCycle = !!event.data.parallel;
 
           if (isParallelCycle && cycleId) {
-            const newStatus = event.type === 'cycle_complete' ? 'completed' : 'failed';
-            setParallelCycles((prev) =>
-              prev.map((c) =>
-                c.id === cycleId ? { ...c, status: newStatus as 'completed' | 'failed' } : c
-              )
-            );
+            // Remove completed/failed cycle from tabs
+            setParallelCycles((prev) => prev.filter((c) => c.id !== cycleId));
+            setEntriesByCycle((prev) => {
+              const next = { ...prev };
+              delete next[cycleId];
+              return next;
+            });
+            // If the removed tab was active, switch to next running tab
+            setActiveParallelTab((prev) => {
+              if (prev !== cycleId) return prev;
+              return null; // will auto-select first remaining tab
+            });
             appendToCycleEntries(cycleId, {
               type: event.type,
               text: `\n========== ${label}: Cycle #${cycleNumber} ==========\n`,
