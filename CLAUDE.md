@@ -34,11 +34,13 @@ src/
 │   ├── autonomous/           # Autonomous mode engine
 │   │   ├── cycle-engine.ts         # Cycle orchestrator (core loop)
 │   │   ├── pipeline-executor.ts    # Multi-agent pipeline execution
+│   │   ├── parallel-coordinator.ts # Worker pool for parallel finding processing
 │   │   ├── watchdog.ts             # Hourly stuck-cycle detection
 │   │   ├── agent-context-builder.ts # Agent prompt context assembly
 │   │   ├── seed-agents.ts          # Built-in agent definitions
 │   │   ├── finding-extractor.ts    # Extract findings from agent output
 │   │   ├── prompt-evolver.ts       # Prompt mutation & scoring
+│   │   ├── evolution-db.ts         # Prompt evolution DB layer
 │   │   ├── git-manager.ts          # Git checkpoint/rollback
 │   │   ├── state-manager.ts        # SESSION-STATE.md management
 │   │   ├── db.ts                   # Autonomous mode DB layer

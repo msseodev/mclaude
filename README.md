@@ -11,11 +11,17 @@ A Claude Code automation tool that queues multiple prompts for sequential execut
 
 ### Autonomous Mode (Multi-Agent Pipeline)
 - **Agent Pipeline** — UX/Tech/Biz Planners (parallel) → Planning Moderator → Developer → Reviewer → QA Engineer
+- **Pipeline Branching** — discovery/fix/test_fix pipelines (skip unnecessary agents per cycle type)
+- **Test Engineer** — Specialized agent for Flutter/Dart test fixes
+- **Parallel Processing** — Worker pool processes multiple findings simultaneously via git worktrees
 - **CEO Escalation** — Agents can request human decisions; responses are injected into subsequent cycles
+- **Discord Integration** — CEO requests sent to Discord with thread-based replies
 - **Watchdog** — Hourly health check via separate Opus session to detect and kill stuck cycles
 - **Mid-Session Prompts** — Inject new instructions while autonomous mode is running
+- **Global Prompt** — Shared instructions injected into all agents across all cycles
 - **Prompt Evolution** — Automatic prompt mutation and scoring to improve agent performance over time
 - **Custom Agents** — Define additional agents with custom system prompts and pipeline ordering
+- **LLM Codebase Scanner** — Claude haiku analyzes project structure at session start
 
 ### Shared
 - **Automatic Rate Limit Handling** — Detects rate limits via exit codes, stream events, and text patterns; retries with exponential backoff (5min~40min)
@@ -64,11 +70,13 @@ src/
 │   ├── autonomous/           # Autonomous mode engine
 │   │   ├── cycle-engine.ts         # Cycle orchestrator (core loop)
 │   │   ├── pipeline-executor.ts    # Multi-agent pipeline execution
+│   │   ├── parallel-coordinator.ts # Worker pool for parallel finding processing
 │   │   ├── watchdog.ts             # Hourly stuck-cycle detection
 │   │   ├── agent-context-builder.ts # Agent prompt context assembly
 │   │   ├── seed-agents.ts          # Built-in agent definitions
 │   │   ├── finding-extractor.ts    # Extract findings from agent output
 │   │   ├── prompt-evolver.ts       # Prompt mutation & scoring
+│   │   ├── evolution-db.ts         # Prompt evolution DB layer
 │   │   ├── screen-capture.ts       # App screenshot capture for planners
 │   │   ├── git-manager.ts          # Git checkpoint/rollback
 │   │   ├── state-manager.ts        # SESSION-STATE.md management
@@ -79,7 +87,7 @@ src/
 │   │   ├── cycle-scorer.ts         # Cycle quality scoring
 │   │   ├── output-parser.ts        # Structured output parsing
 │   │   ├── summarizer.ts           # Output summarization & commit messages
-│   │   ├── codebase-scanner.ts     # Project structure analysis
+│   │   ├── codebase-scanner.ts     # Project structure analysis (LLM-powered)
 │   │   ├── user-prompt-builder.ts  # User prompt assembly
 │   │   ├── db.ts                   # Autonomous mode DB layer
 │   │   └── types.ts                # Autonomous mode types
@@ -297,6 +305,9 @@ curl -X POST http://localhost:51793/api/run \
 Auto mode runs an autonomous multi-agent pipeline in cycles against a target project. The default pipeline is:
 
 **UX Planner + Tech Planner + Biz Planner** (parallel) → **Planning Moderator** → **Developer** → **Reviewer** → **QA Engineer**
+
+- **Pipeline Types**: discovery (full) | fix (Dev→Review→QA) | test_fix (TestEng→QA)
+- **Parallel Worker Pool** — N independent workers process findings simultaneously using git worktrees
 
 Each cycle picks the highest-priority finding, runs the pipeline, and commits on success. A **watchdog** agent checks every hour to kill stuck cycles.
 
