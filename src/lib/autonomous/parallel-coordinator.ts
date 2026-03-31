@@ -25,6 +25,7 @@ interface WorkerState {
 export class WorkerPool {
   private workers: Map<number, WorkerState> = new Map();
   private stopped = false;
+  public abortedByAuthError = false;
   private cycleCounter: number;
   private activePromises: Map<number, Promise<void>> = new Map();
   private mergeLock: Promise<void> = Promise.resolve();
@@ -89,7 +90,7 @@ export class WorkerPool {
       const gitManager = new GitManager(this.session.target_project);
       const batchId = uuidv4().slice(0, 8);
       const branchName = `auto/worker-${workerId}-${batchId}`;
-      const worktreePath = path.join(this.session.target_project, '.mclaude', 'worktrees', `w${workerId}-${batchId}`);
+      const worktreePath = path.join(this.session.target_project, '.mlaude', 'worktrees', `w${workerId}-${batchId}`);
 
       await fs.mkdir(path.dirname(worktreePath), { recursive: true });
       const ok = await gitManager.createWorktree(branchName, worktreePath);
@@ -209,6 +210,15 @@ export class WorkerPool {
       // 10. Rate limit check
       if (pipelineResult?.abortedByRateLimit) {
         this.stopped = true;
+        break;
+      }
+
+      // 11. Auth error check
+      if (pipelineResult?.abortedByAuthError) {
+        this.stopped = true;
+        this.abortedByAuthError = true;
+        // Reset finding back to open (don't count as failure)
+        updateAutoFinding(finding.id, { status: 'open' });
         break;
       }
 

@@ -36,12 +36,14 @@ export interface PipelineResult {
   blockerInfo?: { agentName: string; reason: string };
   abortedByRateLimit?: boolean;
   rateLimitInfo?: RateLimitInfo;
+  abortedByAuthError?: boolean;
 }
 
 interface SingleAgentResult {
   agentRun: AutoAgentRun;
   rateLimited: boolean;
   rateLimitInfo?: RateLimitInfo;
+  authError?: boolean;
 }
 
 interface ExecutionStep {
@@ -59,10 +61,17 @@ interface FeedbackLoopResult {
   additionalStructuredOutputs: StructuredAgentOutput[];
   abortedByRateLimit?: boolean;
   rateLimitInfo?: RateLimitInfo;
+  abortedByAuthError?: boolean;
 }
 
 // Names of planning agents that should receive screen frames
 const PLANNER_AGENT_NAMES = new Set(['product_designer', 'ux_planner']);
+
+// Planning agents that should receive the user's initial_prompt
+const PLANNER_AGENT_NAME_LIST = ['product_designer', 'ux_planner', 'tech_planner', 'biz_planner', 'planning_moderator'];
+function isPlannerAgent(agent: AutoAgent): boolean {
+  return PLANNER_AGENT_NAME_LIST.includes(agent.name);
+}
 
 export class PipelineExecutor {
   private currentExecutor: ClaudeExecutor | null = null;
@@ -155,7 +164,7 @@ export class PipelineExecutor {
             });
 
             const context = buildAgentContext(agent, {
-              userPrompt: userPromptText,
+              userPrompt: isPlannerAgent(agent) ? userPromptText : '',
               sessionState: stateContext,
               previousOutputs,
               structuredOutputs,
@@ -172,8 +181,18 @@ export class PipelineExecutor {
           })
         );
 
-        // Check for rate limits in any parallel result
+        // Check for auth errors or rate limits in any parallel result
         for (const result of parallelResults) {
+          if (result.authError) {
+            return {
+              success: false,
+              agentRuns: allAgentRuns,
+              finalOutput: '',
+              totalCostUsd,
+              totalDurationMs,
+              abortedByAuthError: true,
+            };
+          }
           if (result.rateLimited) {
             return {
               success: false,
@@ -276,7 +295,7 @@ export class PipelineExecutor {
         }
 
         const context = buildAgentContext(agent, {
-          userPrompt: userPromptText,
+          userPrompt: isPlannerAgent(agent) ? userPromptText : '',
           sessionState: stateContext,
           previousOutputs,
           structuredOutputs,
@@ -290,6 +309,17 @@ export class PipelineExecutor {
         });
 
         const result = await this.runSingleAgent(agent, context, 1);
+
+        if (result.authError) {
+          return {
+            success: false,
+            agentRuns: allAgentRuns,
+            finalOutput: '',
+            totalCostUsd,
+            totalDurationMs,
+            abortedByAuthError: true,
+          };
+        }
 
         if (result.rateLimited) {
           return {
@@ -395,6 +425,17 @@ export class PipelineExecutor {
               // Merge updated structured outputs
               structuredOutputs.push(...loopResult.additionalStructuredOutputs);
 
+              if (loopResult.abortedByAuthError) {
+                return {
+                  success: false,
+                  agentRuns: allAgentRuns,
+                  finalOutput: '',
+                  totalCostUsd,
+                  totalDurationMs,
+                  abortedByAuthError: true,
+                };
+              }
+
               if (loopResult.abortedByRateLimit) {
                 return {
                   success: false,
@@ -430,6 +471,17 @@ export class PipelineExecutor {
 
             if (loopResult.latestDeveloperOutput) {
               previousOutputs.set('Developer', loopResult.latestDeveloperOutput);
+            }
+
+            if (loopResult.abortedByAuthError) {
+              return {
+                success: false,
+                agentRuns: allAgentRuns,
+                finalOutput: '',
+                totalCostUsd,
+                totalDurationMs,
+                abortedByAuthError: true,
+              };
             }
 
             if (loopResult.abortedByRateLimit) {
@@ -569,9 +621,27 @@ export class PipelineExecutor {
           });
         },
         // onComplete
-        (result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean }) => {
+        (result) => {
           if (resolved) return;
           resolved = true;
+
+          // Treat auth errors like rate limits — bubble up to abort pipeline
+          if (result.isAuthError) {
+            const now = new Date().toISOString();
+            updateAutoAgentRun(agentRun.id, {
+              status: 'failed',
+              output: result.output || output,
+              duration_ms: result.duration_ms ?? (Date.now() - startTime),
+              completed_at: now,
+            });
+            resolve({
+              agentRun: { ...agentRun, status: 'failed', output: result.output || output, duration_ms: result.duration_ms ?? (Date.now() - startTime), completed_at: now },
+              rateLimited: false,
+              authError: true,
+            });
+            return;
+          }
+
           const now = new Date().toISOString();
           const status = result.isError ? 'failed' : 'completed';
           const finalOutput = result.output || output;
@@ -616,6 +686,7 @@ export class PipelineExecutor {
     latestDeveloperOutput?: string;
     abortedByRateLimit?: boolean;
     rateLimitInfo?: RateLimitInfo;
+    abortedByAuthError?: boolean;
   }> {
     const developer = agents.find(a => a.name === 'developer');
     const reviewer = agents.find(a => a.name === 'reviewer');
@@ -641,7 +712,7 @@ export class PipelineExecutor {
 
       // Re-run Developer with feedback
       const devContext = buildAgentContext(developer, {
-        userPrompt,
+        userPrompt: isPlannerAgent(developer) ? userPrompt : '',
         sessionState: stateContext,
         previousOutputs,
         structuredOutputs,
@@ -656,6 +727,9 @@ export class PipelineExecutor {
       });
 
       const devResult = await this.runSingleAgent(developer, devContext, i + 2);
+      if (devResult.authError) {
+        return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, abortedByAuthError: true };
+      }
       if (devResult.rateLimited) {
         return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, abortedByRateLimit: true, rateLimitInfo: devResult.rateLimitInfo };
       }
@@ -677,7 +751,7 @@ export class PipelineExecutor {
       const gitDiff = cycle?.git_checkpoint ? await gitManager.getDiff(cycle.git_checkpoint) : '';
 
       const reviewContext = buildAgentContext(reviewer, {
-        userPrompt,
+        userPrompt: isPlannerAgent(reviewer) ? userPrompt : '',
         sessionState: stateContext,
         previousOutputs,
         structuredOutputs,
@@ -691,6 +765,9 @@ export class PipelineExecutor {
       });
 
       const reviewResult = await this.runSingleAgent(reviewer, reviewContext, i + 2);
+      if (reviewResult.authError) {
+        return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, abortedByAuthError: true };
+      }
       if (reviewResult.rateLimited) {
         return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, abortedByRateLimit: true, rateLimitInfo: reviewResult.rateLimitInfo };
       }
@@ -746,7 +823,7 @@ export class PipelineExecutor {
 
       // Re-run feedback agent (Moderator or Designer) with developer feedback
       const feedbackContext = buildAgentContext(feedbackAgent, {
-        userPrompt,
+        userPrompt: isPlannerAgent(feedbackAgent) ? userPrompt : '',
         sessionState: stateContext,
         previousOutputs,
         structuredOutputs,
@@ -761,6 +838,9 @@ export class PipelineExecutor {
       });
 
       const feedbackResult = await this.runSingleAgent(feedbackAgent, feedbackContext, i + 2);
+      if (feedbackResult.authError) {
+        return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByAuthError: true };
+      }
       if (feedbackResult.rateLimited) {
         return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByRateLimit: true, rateLimitInfo: feedbackResult.rateLimitInfo };
       }
@@ -785,7 +865,7 @@ export class PipelineExecutor {
 
       // Re-run Developer with revised spec
       const devContext = buildAgentContext(implementer, {
-        userPrompt,
+        userPrompt: isPlannerAgent(implementer) ? userPrompt : '',
         sessionState: stateContext,
         previousOutputs,
         structuredOutputs: [...structuredOutputs, ...newStructuredOutputs],
@@ -799,6 +879,9 @@ export class PipelineExecutor {
       });
 
       const devResult = await this.runSingleAgent(implementer, devContext, i + 2);
+      if (devResult.authError) {
+        return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByAuthError: true };
+      }
       if (devResult.rateLimited) {
         return { additionalRuns: runs, additionalCost: totalCost, additionalDuration: totalDuration, additionalStructuredOutputs: newStructuredOutputs, abortedByRateLimit: true, rateLimitInfo: devResult.rateLimitInfo };
       }

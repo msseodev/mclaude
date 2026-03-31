@@ -1,4 +1,4 @@
-export class MclaudeApiClient {
+export class MlaudeApiClient {
   constructor(private baseUrl: string, private apiKey: string) {}
 
   private async get(path: string) { return this.request('GET', path); }
@@ -35,7 +35,12 @@ export class MclaudeApiClient {
 
   // Auto mode
   async getAutoStatus() { return this.request('GET', '/api/auto/status'); }
-  async startAuto(initialPrompt?: string) { return this.request('POST', '/api/auto', initialPrompt ? { initialPrompt } : {}); }
+  async startAuto(initialPrompt?: string, forceDiscovery?: boolean) {
+    const body: Record<string, unknown> = {};
+    if (initialPrompt) body.initialPrompt = initialPrompt;
+    if (forceDiscovery !== undefined) body.forceDiscovery = forceDiscovery;
+    return this.request('POST', '/api/auto', Object.keys(body).length > 0 ? body : {});
+  }
   async pauseAuto() { return this.request('PATCH', '/api/auto', { action: 'pause' }); }
   async resumeAuto() { return this.request('PATCH', '/api/auto', { action: 'resume' }); }
   async stopAuto() { return this.request('DELETE', '/api/auto'); }

@@ -120,6 +120,34 @@ export class RateLimitDetector {
     return notDetected;
   }
 
+  private authErrorPatterns = [
+    /not authenticated/i,
+    /please.*log.?in/i,
+    /please.*sign.?in/i,
+    /authentication.*expired/i,
+    /session.*expired/i,
+    /ANTHROPIC_API_KEY.*not\s+set/i,
+    /set.*ANTHROPIC_API_KEY/i,
+    /sign in at/i,
+    /not.*logged.*in/i,
+  ];
+
+  checkAuthError(text: string): { detected: boolean; message: string | null } {
+    for (const pattern of this.authErrorPatterns) {
+      if (pattern.test(text)) {
+        return {
+          detected: true,
+          message: text.slice(0, 500),
+        };
+      }
+    }
+
+    return {
+      detected: false,
+      message: null,
+    };
+  }
+
   checkText(text: string): RateLimitInfo {
     for (const pattern of this.rateLimitPatterns) {
       if (pattern.test(text)) {

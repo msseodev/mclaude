@@ -344,7 +344,7 @@ class RunManagerImpl {
     this.executor.execute(effectivePrompt, workingDirectory);
   }
 
-  private handlePromptComplete(result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean }): void {
+  private handlePromptComplete(result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean; isAuthError: boolean }): void {
     if (!this.currentSessionId) return;
 
     const session = getSession(this.currentSessionId);
@@ -352,6 +352,48 @@ class RunManagerImpl {
 
     const promptId = session.current_prompt_id;
     if (!promptId) return;
+
+    if (result.isAuthError) {
+      // Update execution as failed
+      if (this.currentExecutionId) {
+        const execution = getExecution(this.currentExecutionId);
+        const wallClockMs = execution?.started_at
+          ? Date.now() - new Date(execution.started_at).getTime()
+          : result.duration_ms;
+        updateExecution(this.currentExecutionId, {
+          status: 'failed',
+          output: result.output,
+          cost_usd: result.cost_usd,
+          duration_ms: wallClockMs,
+          completed_at: new Date().toISOString(),
+        });
+      }
+
+      // Reset current prompt/plan item to pending for retry after re-login
+      if (this.currentPlanId && this.currentPlanItemRunId) {
+        updatePlanItemRun(this.currentPlanItemRunId, { status: 'pending' });
+      } else {
+        updatePrompt(promptId, { status: 'pending' });
+      }
+
+      // Pause the session
+      updateSession(this.currentSessionId, { status: 'paused' });
+
+      this.emit({
+        type: 'auth_expired',
+        data: {
+          sessionId: this.currentSessionId,
+          message: 'Claude CLI authentication expired. Please run `claude /login` in terminal and resume.',
+        },
+        timestamp: new Date().toISOString(),
+      });
+
+      this.executor = null;
+      this.currentExecutionId = null;
+      this.currentPlanItemRunId = null;
+      caffeinateManager.release();
+      return;
+    }
 
     const now = new Date().toISOString();
 

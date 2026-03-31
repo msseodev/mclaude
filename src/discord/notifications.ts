@@ -7,6 +7,7 @@ import {
   buildRateLimitEmbed,
   buildQueueCompleteEmbed,
   buildQueueStoppedEmbed,
+  buildAuthExpiredEmbed,
   buildCycleStartEmbed,
   buildCycleCompleteEmbed,
   buildCycleFailedEmbed,
@@ -103,12 +104,12 @@ async function connectStream(
   abortControllers.set(mode, controller);
 
   const streamPath = mode === 'run' ? '/api/run/stream' : '/api/auto/stream';
-  const url = `${config.mclaudeBaseUrl}${streamPath}`;
+  const url = `${config.mlaudeBaseUrl}${streamPath}`;
 
   try {
     const headers: Record<string, string> = { Accept: 'text/event-stream' };
-    if (config.mclaudeApiKey) {
-      headers['Authorization'] = `Bearer ${config.mclaudeApiKey}`;
+    if (config.mlaudeApiKey) {
+      headers['Authorization'] = `Bearer ${config.mlaudeApiKey}`;
     }
 
     const res = await fetch(url, {
@@ -278,6 +279,15 @@ async function handleRunEvent(
       break;
     }
 
+    case 'auth_expired': {
+      const embed = buildAuthExpiredEmbed({
+        sessionId: String(eventData.sessionId || ''),
+        message: String(eventData.message || 'Authentication expired'),
+      });
+      await channel.send({ embeds: [embed] });
+      break;
+    }
+
     case 'session_status': {
       // Only notify on meaningful state changes, skip initial status
       // and running status (too noisy)
@@ -341,6 +351,15 @@ async function handleAutoEvent(
       });
       const row = buildRateLimitActionRow();
       await channel.send({ embeds: [embed], components: [row] });
+      break;
+    }
+
+    case 'auth_expired': {
+      const embed = buildAuthExpiredEmbed({
+        sessionId: String(eventData.sessionId || ''),
+        message: String(eventData.message || 'Authentication expired'),
+      });
+      await channel.send({ embeds: [embed] });
       break;
     }
 

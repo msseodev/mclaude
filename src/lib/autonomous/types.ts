@@ -198,6 +198,7 @@ export type AutoSSEEventType =
   | 'ceo_request_responded'
   | 'parallel_batch_start'
   | 'parallel_batch_complete'
+  | 'auth_expired'
   | 'error';
 
 export interface AutoSSEEvent {

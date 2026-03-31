@@ -22,7 +22,7 @@ export class ClaudeExecutor {
     private claudeBinary: string,
     private onEvent: (event: SSEEvent) => void,
     private onRateLimit: (info: RateLimitInfo) => void,
-    private onComplete: (result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean }) => void,
+    private onComplete: (result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean; isAuthError: boolean }) => void,
   ) {
     this.streamParser = new StreamParser();
     this.rateLimitDetector = new RateLimitDetector();
@@ -124,6 +124,14 @@ export class ClaudeExecutor {
         }
       }
 
+      // Check for auth errors only on non-zero exit to avoid false positives
+      let isAuthError = false;
+      if (isError) {
+        const combinedText = this.accumulatedOutput + this.accumulatedStderr;
+        const authCheck = this.rateLimitDetector.checkAuthError(combinedText);
+        isAuthError = authCheck.detected;
+      }
+
       // Include stderr in output when there's an error for debugging
       let output = this.accumulatedOutput;
       if (isError && this.accumulatedStderr) {
@@ -137,6 +145,7 @@ export class ClaudeExecutor {
         duration_ms: this.lastDurationMs,
         output,
         isError,
+        isAuthError,
       });
     });
 
@@ -148,6 +157,7 @@ export class ClaudeExecutor {
           duration_ms: null,
           output: `Process error: ${err.message}`,
           isError: true,
+          isAuthError: false,
         });
       }
     });

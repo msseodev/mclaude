@@ -35,8 +35,6 @@ import {
   getAutoUserPrompts,
   getAutoAgentRunsByCycle,
 } from './db';
-import { PhaseSelector } from './phase-selector';
-import { PromptBuilder } from './prompt-builder';
 import { FindingExtractor } from './finding-extractor';
 import { GitManager } from './git-manager';
 import { StateManager } from './state-manager';
@@ -79,6 +77,7 @@ class CycleEngineImpl {
   private isPauseAfterCycle: boolean = false;
   private isStopping: boolean = false;
   private codebaseSummaryCache: string | null = null;
+  private forceDiscovery: boolean = true;
   private watchdog: Watchdog = new Watchdog();
   private workerPool: WorkerPool | null = null;
 
@@ -111,7 +110,7 @@ class CycleEngineImpl {
 
   // --- Lifecycle ---
 
-  async start(targetProject?: string, initialPrompt?: string): Promise<void> {
+  async start(targetProject?: string, initialPrompt?: string, forceDiscovery?: boolean): Promise<void> {
     // Guard: already running
     if (this.executor?.isRunning() || this.retryTimer || this.currentSessionId) {
       throw new Error('Autonomous mode is already running');
@@ -140,6 +139,7 @@ class CycleEngineImpl {
     this.lastPhase = null;
     this.lastCycleStatus = null;
     this.lastFindingId = null;
+    this.forceDiscovery = forceDiscovery ?? true;
     this.eventBuffer = [];
     this.currentOutput = '';
 
@@ -437,15 +437,6 @@ class CycleEngineImpl {
     }, 100); // Small delay between cycles
   }
 
-  private isPipelineMode(): boolean {
-    try {
-      const enabledAgents = getAutoAgents(true);
-      return enabledAgents.length > 0;
-    } catch {
-      return false;
-    }
-  }
-
   private async _processNextCycleImpl(): Promise<void> {
     if (!this.currentSessionId) return;
 
@@ -454,132 +445,7 @@ class CycleEngineImpl {
 
     if (!this.checkSafetyLimits()) return;
 
-    if (this.isPipelineMode()) {
-      await this._processNextCyclePipeline(session);
-    } else {
-      await this._processNextCycleV1(session);
-    }
-  }
-
-  private async _processNextCycleV1(session: NonNullable<ReturnType<typeof getAutoSession>>): Promise<void> {
-    const settings = getAllAutoSettings();
-    const openFindings = getOpenAutoFindings();
-
-    // Select next phase
-    const phaseSelector = new PhaseSelector(settings);
-    const selection = phaseSelector.selectNextPhase({
-      cycleNumber: this.cycleNumber,
-      lastPhase: this.lastPhase,
-      lastCycleStatus: this.lastCycleStatus,
-      lastFindingId: this.lastFindingId,
-      openFindings,
-      totalCycles: session.total_cycles,
-    });
-
-    this.currentPhase = selection.phase;
-    this.currentFindingId = selection.findingId;
-
-    // Mark finding as in_progress
-    if (selection.findingId) {
-      updateAutoFinding(selection.findingId, { status: 'in_progress' });
-    }
-
-    // Git checkpoint
-    let gitCheckpoint: string | null = null;
-    if (settings.auto_commit) {
-      const gitManager = new GitManager(session.target_project);
-      gitCheckpoint = await gitManager.createCheckpoint();
-    }
-
-    // Build prompt
-    const promptBuilder = new PromptBuilder(settings);
-    const stateManager = new StateManager(session.target_project);
-    const stateContext = await stateManager.readState() || '';
-    const allFindings = getAutoFindings({ session_id: this.currentSessionId! });
-
-    let prompt: string;
-    switch (selection.phase) {
-      case 'discovery':
-        prompt = promptBuilder.buildDiscoveryPrompt(stateContext, allFindings);
-        break;
-      case 'fix': {
-        const fixFinding = selection.findingId ? getAutoFinding(selection.findingId) : null;
-        prompt = fixFinding
-          ? promptBuilder.buildFixPrompt(stateContext, fixFinding)
-          : promptBuilder.buildDiscoveryPrompt(stateContext, allFindings);
-        break;
-      }
-      case 'test':
-        prompt = promptBuilder.buildTestPrompt(stateContext);
-        break;
-      case 'improve': {
-        const improveFinding = selection.findingId ? getAutoFinding(selection.findingId) : null;
-        prompt = improveFinding
-          ? promptBuilder.buildImprovePrompt(stateContext, improveFinding)
-          : promptBuilder.buildDiscoveryPrompt(stateContext, allFindings);
-        break;
-      }
-      case 'review': {
-        const gitMgr = new GitManager(session.target_project);
-        const diff = gitCheckpoint ? await gitMgr.getDiff(gitCheckpoint) : '';
-        prompt = promptBuilder.buildReviewPrompt(stateContext, diff);
-        break;
-      }
-      default:
-        prompt = promptBuilder.buildDiscoveryPrompt(stateContext, allFindings);
-        break;
-    }
-
-    // Create cycle record
-    const cycle = createAutoCycle({
-      session_id: this.currentSessionId!,
-      cycle_number: this.cycleNumber,
-      phase: selection.phase,
-      finding_id: selection.findingId,
-      prompt_used: prompt,
-      git_checkpoint: gitCheckpoint,
-    });
-    this.currentCycleId = cycle.id;
-    this.currentOutput = '';
-
-    // Emit cycle_start
-    this.emit({
-      type: 'cycle_start',
-      data: {
-        cycleId: cycle.id,
-        cycleNumber: this.cycleNumber,
-        phase: selection.phase,
-        findingId: selection.findingId,
-      },
-      timestamp: new Date().toISOString(),
-    });
-
-    // Execute via ClaudeExecutor
-    const claudeBinary = getSetting('claude_binary') || 'claude';
-    this.executor = new ClaudeExecutor(
-      claudeBinary,
-      (event: SSEEvent) => {
-        // Forward text_delta, tool_start, tool_end events
-        if (event.type === 'text_delta') {
-          this.currentOutput += (event.data.text as string) || '';
-        }
-        this.emit({
-          type: event.type as AutoSSEEvent['type'],
-          data: event.data,
-          timestamp: event.timestamp,
-        });
-      },
-      (info: RateLimitInfo) => {
-        // Rate limit handler
-        this.handleRateLimit(info);
-      },
-      (result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean }) => {
-        // Completion handler
-        this.handleCycleComplete(result);
-      },
-    );
-
-    this.executor.execute(prompt, session.target_project);
+    await this._processNextCyclePipeline(session);
   }
 
   private determinePipelineType(finding: { category: string } | null | undefined): PipelineType {
@@ -593,14 +459,16 @@ class CycleEngineImpl {
 
     const settings = getAllAutoSettings();
 
-    // Select finding to fix (same priority logic as v1)
-    const openFindings = getOpenAutoFindings();
-    const actionableFindings = openFindings.filter(f => f.retry_count < f.max_retries);
-    // Sort by priority: P0 > P1 > P2 > P3
+    // First cycle of a new session runs discovery (unless user opted out)
+    const forceDiscovery = this.cycleNumber === 0 && this.forceDiscovery;
+
+    // Select finding to fix
+    const openFindings = forceDiscovery ? [] : getOpenAutoFindings();
+    const actionableFindings = forceDiscovery ? [] : openFindings.filter(f => f.retry_count < f.max_retries);
     actionableFindings.sort((a, b) => a.priority.localeCompare(b.priority));
 
-    // Parallel mode: use worker pool to process findings concurrently
-    if (settings.parallel_mode && actionableFindings.length >= 2) {
+    // Parallel mode: use worker pool to process findings concurrently (skip on forced discovery)
+    if (!forceDiscovery && settings.parallel_mode && actionableFindings.length >= 2) {
       await this._processParallelWorkerPool(session, settings);
       return;
     }
@@ -695,6 +563,33 @@ class CycleEngineImpl {
     const result = await this.pipelineExecutor.execute();
     this.watchdog.stop();
     this.pipelineExecutor = null;
+
+    // Handle auth error
+    if (result.abortedByAuthError) {
+      const now = new Date().toISOString();
+      updateAutoCycle(this.currentCycleId!, {
+        status: 'failed',
+        output: result.finalOutput,
+        cost_usd: result.totalCostUsd,
+        duration_ms: result.totalDurationMs,
+        completed_at: now,
+      });
+      if (findingToFix) {
+        updateAutoFinding(findingToFix.id, { status: 'open' });
+      }
+      updateAutoSession(this.currentSessionId, { status: 'paused' });
+      this.emit({
+        type: 'auth_expired',
+        data: {
+          sessionId: this.currentSessionId,
+          message: 'Claude CLI authentication expired. Please run `claude /login` in terminal and resume.',
+        },
+        timestamp: now,
+      });
+      this.isPaused = true;
+      caffeinateManager.release();
+      return;
+    }
 
     // Handle rate limit
     if (result.abortedByRateLimit && result.rateLimitInfo) {
@@ -925,6 +820,24 @@ class CycleEngineImpl {
     await this.workerPool.start(); // Blocks until all workers finish (no more findings)
 
     this.cycleNumber = this.workerPool.getCycleCount();
+
+    if (this.workerPool?.abortedByAuthError) {
+      // Pause session with auth_expired notification
+      updateAutoSession(this.currentSessionId!, { status: 'paused' });
+      this.emit({
+        type: 'auth_expired',
+        data: {
+          sessionId: this.currentSessionId,
+          message: 'Claude CLI authentication expired. Please run `claude /login` in terminal and resume.',
+        },
+        timestamp: new Date().toISOString(),
+      });
+      this.isPaused = true;
+      this.workerPool = null;
+      caffeinateManager.release();
+      return;
+    }
+
     this.workerPool = null;
 
     // Evolution check
@@ -944,13 +857,43 @@ class CycleEngineImpl {
     this.processNextCycle();
   }
 
-  private handleCycleComplete(result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean }): void {
+  private handleCycleComplete(result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean; isAuthError: boolean }): void {
     if (!this.currentSessionId || !this.currentCycleId) return;
 
     const session = getAutoSession(this.currentSessionId);
     if (!session) return;
 
     const now = new Date().toISOString();
+
+    if (result.isAuthError) {
+      // Update cycle as failed
+      updateAutoCycle(this.currentCycleId, {
+        status: 'failed',
+        output: result.output,
+        cost_usd: result.cost_usd,
+        duration_ms: result.duration_ms,
+        completed_at: now,
+      });
+
+      if (this.currentFindingId) {
+        updateAutoFinding(this.currentFindingId, { status: 'open' });
+      }
+
+      // Pause the session immediately
+      updateAutoSession(this.currentSessionId, { status: 'paused' });
+      this.emit({
+        type: 'auth_expired',
+        data: {
+          sessionId: this.currentSessionId,
+          message: 'Claude CLI authentication expired. Please run `claude /login` in terminal and resume.',
+        },
+        timestamp: new Date().toISOString(),
+      });
+      this.isPaused = true;
+      caffeinateManager.release();
+      return;
+    }
+
     const settings = getAllAutoSettings();
 
     // Update cycle record
@@ -1251,6 +1194,7 @@ class CycleEngineImpl {
     this.isPauseAfterCycle = false;
     this.isStopping = false;
     this.retryCount = 0;
+    this.forceDiscovery = true;
     this.codebaseSummaryCache = null;
     this.workerPool = null;
   }

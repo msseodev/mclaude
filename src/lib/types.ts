@@ -94,6 +94,7 @@ export type SSEEventType =
   | 'queue_complete'
   | 'queue_stopped'
   | 'session_status'
+  | 'auth_expired'
   | 'error';
 
 export interface SSEEvent {

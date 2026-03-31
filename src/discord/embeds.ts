@@ -258,6 +258,25 @@ export function buildAutoSessionStoppedEmbed(data: {
 }
 
 // ---------------------------------------------------------------------------
+// Auth expired embed
+// ---------------------------------------------------------------------------
+
+export function buildAuthExpiredEmbed(data: {
+  sessionId: string;
+  message: string;
+}): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(COLORS.error)
+    .setTitle('Authentication Expired')
+    .setDescription(data.message)
+    .addFields(
+      { name: 'Session', value: data.sessionId, inline: true },
+      { name: 'Action Required', value: 'Run `claude /login` in terminal, then resume.', inline: false },
+    )
+    .setTimestamp();
+}
+
+// ---------------------------------------------------------------------------
 // CEO request embeds
 // ---------------------------------------------------------------------------
 
@@ -293,11 +312,11 @@ export function buildCEORequestEmbed(data: {
 export function buildRunActionRow(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId('mclaude:pause')
+      .setCustomId('mlaude:pause')
       .setLabel('Pause')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId('mclaude:stop')
+      .setCustomId('mlaude:stop')
       .setLabel('Stop')
       .setStyle(ButtonStyle.Danger),
   );
@@ -306,7 +325,7 @@ export function buildRunActionRow(): ActionRowBuilder<ButtonBuilder> {
 export function buildRateLimitActionRow(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId('mclaude:stop')
+      .setCustomId('mlaude:stop')
       .setLabel('Stop')
       .setStyle(ButtonStyle.Danger),
   );
@@ -315,7 +334,7 @@ export function buildRateLimitActionRow(): ActionRowBuilder<ButtonBuilder> {
 export function buildQueueCompleteActionRow(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId('mclaude:run-again')
+      .setCustomId('mlaude:run-again')
       .setLabel('Run Again')
       .setStyle(ButtonStyle.Primary),
   );
@@ -324,11 +343,11 @@ export function buildQueueCompleteActionRow(): ActionRowBuilder<ButtonBuilder> {
 export function buildAutoActionRow(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId('mclaude:auto-pause')
+      .setCustomId('mlaude:auto-pause')
       .setLabel('Pause')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId('mclaude:auto-stop')
+      .setCustomId('mlaude:auto-stop')
       .setLabel('Stop')
       .setStyle(ButtonStyle.Danger),
   );

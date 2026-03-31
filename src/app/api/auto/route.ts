@@ -6,14 +6,16 @@ export async function POST(request: NextRequest) {
   try {
     let targetProject: string | undefined;
     let initialPrompt: string | undefined;
+    let forceDiscovery: boolean | undefined;
     try {
       const body = await request.json();
       targetProject = body.targetProject;
       initialPrompt = body.initialPrompt;
+      forceDiscovery = body.forceDiscovery;
     } catch {
       // No body is fine
     }
-    await autoEngine.start(targetProject, initialPrompt);
+    await autoEngine.start(targetProject, initialPrompt, forceDiscovery);
     const status = autoEngine.getStatus();
     return NextResponse.json(status);
   } catch (error) {

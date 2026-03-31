@@ -430,13 +430,13 @@ export default function AutoDashboardPage() {
   }, [output, entriesByCycle, activeParallelTab]);
 
   // Control handlers
-  async function handleStart(targetProject?: string, initialPrompt?: string) {
+  async function handleStart(targetProject?: string, initialPrompt?: string, forceDiscovery?: boolean) {
     setActionLoading(true);
     try {
       const res = await fetch('/api/auto', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetProject, initialPrompt }),
+        body: JSON.stringify({ targetProject, initialPrompt, forceDiscovery }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -777,7 +777,7 @@ function StartAutoModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onStart: (targetProject?: string, initialPrompt?: string) => Promise<void>;
+  onStart: (targetProject?: string, initialPrompt?: string, forceDiscovery?: boolean) => Promise<void>;
   loading: boolean;
 }) {
   return (
@@ -800,11 +800,13 @@ function StartAutoModalContent({
   loading,
 }: {
   onClose: () => void;
-  onStart: (targetProject?: string, initialPrompt?: string) => Promise<void>;
+  onStart: (targetProject?: string, initialPrompt?: string, forceDiscovery?: boolean) => Promise<void>;
   loading: boolean;
 }) {
   const [targetProject, setTargetProject] = useState('');
   const [initialPrompt, setInitialPrompt] = useState('');
+  const [forceDiscovery, setForceDiscovery] = useState(true);
+  const [openFindingsCount, setOpenFindingsCount] = useState<number | null>(null);
 
   // Load target_project from settings on mount
   useEffect(() => {
@@ -816,9 +818,27 @@ function StartAutoModalContent({
           setTargetProject(data.target_project);
         }
       })
-      .catch(() => {
-        // ignore
-      });
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Load actionable findings count on mount (open + in_progress)
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/auto/findings?limit=500')
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!cancelled && Array.isArray(data)) {
+          const actionable = data.filter(
+            (f: { status: string }) => f.status === 'open' || f.status === 'in_progress'
+          );
+          setOpenFindingsCount(actionable.length);
+          if (actionable.length === 0) {
+            setForceDiscovery(true);
+          }
+        }
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -827,6 +847,7 @@ function StartAutoModalContent({
     await onStart(
       targetProject.trim() || undefined,
       initialPrompt.trim() || undefined,
+      forceDiscovery,
     );
   }
 
@@ -864,6 +885,43 @@ function StartAutoModalContent({
           <p className="mt-1 text-xs text-gray-500">
             Guide the autonomous mode with a specific goal or instruction
           </p>
+        </div>
+
+        {/* First Cycle Mode */}
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm font-medium text-gray-700">First Cycle: Discovery</span>
+              <p className="text-xs text-gray-500">
+                {forceDiscovery
+                  ? 'Analyze codebase first, then fix findings'
+                  : 'Skip discovery, start fixing existing findings'}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={forceDiscovery}
+              disabled={openFindingsCount === 0}
+              onClick={() => setForceDiscovery(!forceDiscovery)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                forceDiscovery ? 'bg-blue-600' : 'bg-gray-200'
+              } ${openFindingsCount === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  forceDiscovery ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+          {openFindingsCount !== null && (
+            <p className={`mt-2 text-xs ${openFindingsCount > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
+              {openFindingsCount > 0
+                ? `${openFindingsCount} open finding${openFindingsCount !== 1 ? 's' : ''} remaining`
+                : 'No open findings'}
+            </p>
+          )}
         </div>
       </div>
       <div className="mt-4 flex justify-end gap-2">

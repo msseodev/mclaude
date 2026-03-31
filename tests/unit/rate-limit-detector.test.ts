@@ -160,6 +160,77 @@ describe('RateLimitDetector', () => {
     });
   });
 
+  describe('checkAuthError', () => {
+    const detector = new RateLimitDetector();
+
+    // Real auth error messages that should be detected
+    it('detects "not authenticated" message', () => {
+      const result = detector.checkAuthError('Error: Not authenticated. Please sign in.');
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects "please log in" message', () => {
+      const result = detector.checkAuthError('Please log in to continue.');
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects "please sign in" message', () => {
+      const result = detector.checkAuthError('Please sign in at claude.ai');
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects "authentication expired" message', () => {
+      const result = detector.checkAuthError('Your authentication has expired.');
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects "session expired" message', () => {
+      const result = detector.checkAuthError('Your session has expired.');
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects ANTHROPIC_API_KEY not set message', () => {
+      const result = detector.checkAuthError('ANTHROPIC_API_KEY is not set.');
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects "sign in at" message', () => {
+      const result = detector.checkAuthError('Please sign in at https://claude.ai');
+      expect(result.detected).toBe(true);
+    });
+
+    it('detects "not logged in" message', () => {
+      const result = detector.checkAuthError('You are not logged in.');
+      expect(result.detected).toBe(true);
+    });
+
+    // False positive scenarios that should NOT be detected
+    it('does not false-positive on code discussing login routes', () => {
+      const result = detector.checkAuthError('Navigate to /login page to see the form');
+      expect(result.detected).toBe(false);
+    });
+
+    it('does not false-positive on code mentioning ANTHROPIC_API_KEY in docs', () => {
+      const result = detector.checkAuthError('The ANTHROPIC_API_KEY environment variable is used for authentication');
+      expect(result.detected).toBe(false);
+    });
+
+    it('does not false-positive on code with login-related variable names', () => {
+      const result = detector.checkAuthError('const loginUrl = "/api/auth/login";');
+      expect(result.detected).toBe(false);
+    });
+
+    it('does not false-positive on empty string', () => {
+      const result = detector.checkAuthError('');
+      expect(result.detected).toBe(false);
+    });
+
+    it('does not false-positive on normal successful output', () => {
+      const result = detector.checkAuthError('Successfully compiled 42 files. All tests passed.');
+      expect(result.detected).toBe(false);
+    });
+  });
+
   describe('parseResetTime', () => {
     it('should parse "resets 11am (Asia/Seoul)"', () => {
       const ms = detector.parseResetTime("You've hit your limit. resets 11am (Asia/Seoul)");
