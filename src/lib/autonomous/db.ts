@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { AutoSession, AutoCycle, AutoFinding, AutoSettings, AutoUserPrompt, AutoAgent, AutoAgentRun, CEORequest, CEORequestType, CEORequestStatus } from './types';
 import { seedBuiltinAgents } from './seed-agents';
 import { initEvolutionTables } from './evolution-db';
+import { initMemoryTables } from './memory-db';
 
 const DEFAULT_GLOBAL_PROMPT = `## Autonomy & CEO Escalation Policy
 
@@ -233,9 +234,30 @@ export function initAutoTables(): void {
   // v8 settings: parallel finding processing
   insertSetting.run('parallel_mode', 'false');
   insertSetting.run('max_parallel_pipelines', '3');
+  // v10: Memory settings
+  insertSetting.run('memory_enabled', 'true');
+  insertSetting.run('knowledge_extraction_interval', '5');
+  insertSetting.run('max_knowledge_context_chars', '3500');
 
   // Initialize evolution tables
   initEvolutionTables();
+
+  // v10: Memory tables
+  initMemoryTables();
+
+  // v10: Add project_path to findings for cross-session queries
+  try {
+    db.exec('ALTER TABLE auto_findings ADD COLUMN project_path TEXT');
+    // Backfill from sessions
+    db.exec(`UPDATE auto_findings SET project_path = (
+      SELECT target_project FROM auto_sessions WHERE auto_sessions.id = auto_findings.session_id
+    ) WHERE project_path IS NULL`);
+  } catch { /* Column already exists */ }
+
+  // v10: Add resolution_summary to findings
+  try {
+    db.exec('ALTER TABLE auto_findings ADD COLUMN resolution_summary TEXT');
+  } catch { /* Column already exists */ }
 
   // v6: CEO escalation requests table
   db.exec(`
@@ -379,14 +401,22 @@ export function createAutoFinding(data: {
   description: string;
   file_path?: string | null;
   max_retries?: number;
+  project_path?: string;
 }): AutoFinding {
   const db = getDb();
   const id = uuidv4();
   const now = new Date().toISOString();
 
+  // Resolve project_path: use provided value, or look up from session
+  let projectPath = data.project_path ?? null;
+  if (!projectPath) {
+    const session = db.prepare('SELECT target_project FROM auto_sessions WHERE id = ?').get(data.session_id) as { target_project: string } | undefined;
+    projectPath = session?.target_project ?? null;
+  }
+
   db.prepare(
-    'INSERT INTO auto_findings (id, session_id, category, priority, title, description, file_path, status, retry_count, max_retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, data.session_id, data.category, data.priority ?? 'P2', data.title, data.description, data.file_path ?? null, 'open', 0, data.max_retries ?? 3, now, now);
+    'INSERT INTO auto_findings (id, session_id, category, priority, title, description, file_path, status, retry_count, max_retries, project_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, data.session_id, data.category, data.priority ?? 'P2', data.title, data.description, data.file_path ?? null, 'open', 0, data.max_retries ?? 3, projectPath, now, now);
 
   return getAutoFinding(id)!;
 }
@@ -396,7 +426,7 @@ export function getAutoFinding(id: string): AutoFinding | undefined {
   return db.prepare('SELECT * FROM auto_findings WHERE id = ?').get(id) as AutoFinding | undefined;
 }
 
-export function updateAutoFinding(id: string, data: Partial<Pick<AutoFinding, 'status' | 'priority' | 'retry_count' | 'resolved_by_cycle_id' | 'description' | 'failure_history'>>): AutoFinding | undefined {
+export function updateAutoFinding(id: string, data: Partial<Pick<AutoFinding, 'status' | 'priority' | 'retry_count' | 'resolved_by_cycle_id' | 'description' | 'failure_history' | 'resolution_summary'>>): AutoFinding | undefined {
   const db = getDb();
   const existing = getAutoFinding(id);
   if (!existing) return undefined;
@@ -408,10 +438,11 @@ export function updateAutoFinding(id: string, data: Partial<Pick<AutoFinding, 's
   const resolvedByCycleId = data.resolved_by_cycle_id !== undefined ? data.resolved_by_cycle_id : existing.resolved_by_cycle_id;
   const description = data.description ?? existing.description;
   const failureHistory = data.failure_history !== undefined ? data.failure_history : (existing.failure_history ?? null);
+  const resolutionSummary = data.resolution_summary !== undefined ? data.resolution_summary : (existing.resolution_summary ?? null);
 
   db.prepare(
-    'UPDATE auto_findings SET status = ?, priority = ?, retry_count = ?, resolved_by_cycle_id = ?, description = ?, failure_history = ?, updated_at = ? WHERE id = ?'
-  ).run(status, priority, retryCount, resolvedByCycleId, description, failureHistory, now, id);
+    'UPDATE auto_findings SET status = ?, priority = ?, retry_count = ?, resolved_by_cycle_id = ?, description = ?, failure_history = ?, resolution_summary = ?, updated_at = ? WHERE id = ?'
+  ).run(status, priority, retryCount, resolvedByCycleId, description, failureHistory, resolutionSummary, now, id);
 
   return getAutoFinding(id);
 }
@@ -508,6 +539,10 @@ export function getAllAutoSettings(): AutoSettings {
     // v8 settings: parallel finding processing
     parallel_mode: getAutoSetting('parallel_mode') === 'true',
     max_parallel_pipelines: Number(getAutoSetting('max_parallel_pipelines') ?? '3'),
+    // v10 settings: memory
+    memory_enabled: getAutoSetting('memory_enabled') !== 'false',
+    knowledge_extraction_interval: Number(getAutoSetting('knowledge_extraction_interval') ?? '5'),
+    max_knowledge_context_chars: Number(getAutoSetting('max_knowledge_context_chars') ?? '3500'),
   };
 }
 

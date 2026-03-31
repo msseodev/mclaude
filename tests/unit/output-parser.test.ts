@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAgentOutput } from '../../src/lib/autonomous/output-parser';
+import { parseAgentOutput, parseTeamMessages } from '../../src/lib/autonomous/output-parser';
 
 describe('parseAgentOutput', () => {
   describe('Product Designer output', () => {
@@ -142,5 +142,108 @@ Please review the above features.`;
       expect(result.structuredData).toBeNull();
       expect(result.summary).toBe('');
     });
+  });
+});
+
+describe('parseTeamMessages', () => {
+  it('extracts team messages from JSON code block', () => {
+    const output = `Here are my observations:
+
+\`\`\`json
+{
+  "team_messages": [
+    { "category": "convention", "content": "Always use camelCase for variable names" }
+  ]
+}
+\`\`\`
+
+That's all.`;
+
+    const result = parseTeamMessages(output);
+    expect(result).toHaveLength(1);
+    expect(result[0].category).toBe('convention');
+    expect(result[0].content).toBe('Always use camelCase for variable names');
+  });
+
+  it('extracts team messages from raw JSON', () => {
+    // Raw JSON fallback uses non-greedy regex, so test with JSON that the regex can match.
+    // For nested objects, code blocks (tested above) are the primary extraction path.
+    const rawJson = JSON.stringify({
+      team_messages: [{ category: 'architecture', content: 'Use repository pattern for data access' }],
+    });
+    const output = `Some text before ${rawJson} and after`;
+
+    const result = parseTeamMessages(output);
+    expect(result).toHaveLength(1);
+    expect(result[0].category).toBe('architecture');
+    expect(result[0].content).toBe('Use repository pattern for data access');
+  });
+
+  it('handles singular team_message form', () => {
+    const output = `\`\`\`json
+{ "team_message": { "category": "warning", "content": "Do not use any() type" } }
+\`\`\``;
+
+    const result = parseTeamMessages(output);
+    expect(result).toHaveLength(1);
+    expect(result[0].category).toBe('warning');
+    expect(result[0].content).toBe('Do not use any() type');
+  });
+
+  it('validates category (rejects invalid)', () => {
+    const output = `\`\`\`json
+{
+  "team_messages": [
+    { "category": "invalid_category", "content": "This should be rejected" },
+    { "category": "convention", "content": "This should be accepted" }
+  ]
+}
+\`\`\``;
+
+    const result = parseTeamMessages(output);
+    expect(result).toHaveLength(1);
+    expect(result[0].category).toBe('convention');
+  });
+
+  it('validates content (rejects empty)', () => {
+    const output = `\`\`\`json
+{
+  "team_messages": [
+    { "category": "convention", "content": "" },
+    { "category": "convention", "content": "   " },
+    { "category": "pattern", "content": "Valid content" }
+  ]
+}
+\`\`\``;
+
+    const result = parseTeamMessages(output);
+    expect(result).toHaveLength(1);
+    expect(result[0].category).toBe('pattern');
+    expect(result[0].content).toBe('Valid content');
+  });
+
+  it('returns empty array when no team messages found', () => {
+    const output = 'This is just some regular output with no team messages at all.';
+
+    const result = parseTeamMessages(output);
+    expect(result).toEqual([]);
+  });
+
+  it('handles multiple team messages', () => {
+    const output = `\`\`\`json
+{
+  "team_messages": [
+    { "category": "convention", "content": "Use const over let when possible" },
+    { "category": "architecture", "content": "All API routes should validate input" },
+    { "category": "pattern", "content": "Use early returns to reduce nesting" }
+  ]
+}
+\`\`\``;
+
+    const result = parseTeamMessages(output);
+    expect(result).toHaveLength(3);
+    expect(result[0].category).toBe('convention');
+    expect(result[1].category).toBe('architecture');
+    expect(result[2].category).toBe('pattern');
   });
 });

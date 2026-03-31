@@ -20,6 +20,9 @@ export interface AgentContext {
   ceoRequests?: CEORequest[];
   pipelineType?: PipelineType;
   globalPrompt?: string;
+  projectKnowledge?: string;
+  teamMessages?: string;
+  wontFixSummary?: string;
 }
 
 export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
@@ -60,6 +63,21 @@ export function buildAgentContext(agent: AutoAgent, ctx: AgentContext): string {
       }
       parts.push(pendingParts.join('\n'));
     }
+  }
+
+  // 2.5. Project Knowledge (cross-session organizational memory)
+  if (ctx.projectKnowledge) {
+    parts.push(`\n[Project Knowledge]\n${ctx.projectKnowledge}`);
+  }
+
+  // 2.6. Team Messages (cross-cycle broadcast)
+  if (ctx.teamMessages) {
+    parts.push(`\n[Team Messages]\n${ctx.teamMessages}`);
+  }
+
+  // 2.7. Known Limitations (wont_fix findings to avoid re-generating — planners only)
+  if (ctx.wontFixSummary) {
+    parts.push(`\n[Known Limitations - Do Not Re-Report]\n${ctx.wontFixSummary}`);
   }
 
   // 3. User Prompt

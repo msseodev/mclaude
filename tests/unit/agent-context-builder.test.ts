@@ -272,4 +272,84 @@ describe('buildAgentContext', () => {
     expect(result).toContain('Raw designer output here');
     expect(result).not.toContain('Output Summary');
   });
+
+  it('includes project knowledge when provided', () => {
+    const result = buildAgentContext(makeAgent(), {
+      userPrompt: '',
+      sessionState: '',
+      previousOutputs: new Map(),
+      projectKnowledge: 'Architecture: Use repository pattern for data access.',
+    });
+    expect(result).toContain('[Project Knowledge]');
+    expect(result).toContain('Architecture: Use repository pattern for data access.');
+  });
+
+  it('includes team messages when provided', () => {
+    const result = buildAgentContext(makeAgent(), {
+      userPrompt: '',
+      sessionState: '',
+      previousOutputs: new Map(),
+      teamMessages: 'Reviewer: Always use strict TypeScript mode.',
+    });
+    expect(result).toContain('[Team Messages]');
+    expect(result).toContain('Reviewer: Always use strict TypeScript mode.');
+  });
+
+  it('includes wont fix summary when provided', () => {
+    const result = buildAgentContext(makeAgent(), {
+      userPrompt: '',
+      sessionState: '',
+      previousOutputs: new Map(),
+      wontFixSummary: '- Memory leak in event handler: Third-party library issue',
+    });
+    expect(result).toContain('[Known Limitations - Do Not Re-Report]');
+    expect(result).toContain('Memory leak in event handler: Third-party library issue');
+  });
+
+  it('excludes project knowledge when not provided', () => {
+    const result = buildAgentContext(makeAgent(), {
+      userPrompt: '',
+      sessionState: '',
+      previousOutputs: new Map(),
+    });
+    expect(result).not.toContain('[Project Knowledge]');
+    expect(result).not.toContain('[Team Messages]');
+    expect(result).not.toContain('[Known Limitations');
+  });
+
+  it('places knowledge sections between CEO responses and User Prompt', () => {
+    const result = buildAgentContext(makeAgent(), {
+      userPrompt: 'Build app',
+      sessionState: '',
+      previousOutputs: new Map(),
+      projectKnowledge: 'Use MVC pattern',
+      teamMessages: 'Convention note',
+      wontFixSummary: 'Known issue',
+      ceoRequests: [{
+        id: 'req-1',
+        session_id: 'session-1',
+        cycle_id: 'cycle-1',
+        from_agent: 'Developer',
+        type: 'decision',
+        title: 'Need approval',
+        description: 'Approve the architecture',
+        blocking: 0,
+        status: 'approved',
+        ceo_response: 'Approved',
+        created_at: '2026-01-01T00:00:00Z',
+        responded_at: '2026-01-01T01:00:00Z',
+      }],
+    });
+
+    const ceoIdx = result.indexOf('CEO');
+    const knowledgeIdx = result.indexOf('[Project Knowledge]');
+    const teamIdx = result.indexOf('[Team Messages]');
+    const limitIdx = result.indexOf('[Known Limitations');
+    const userIdx = result.indexOf('[User Prompt]');
+
+    expect(ceoIdx).toBeLessThan(knowledgeIdx);
+    expect(knowledgeIdx).toBeLessThan(teamIdx);
+    expect(teamIdx).toBeLessThan(limitIdx);
+    expect(limitIdx).toBeLessThan(userIdx);
+  });
 });

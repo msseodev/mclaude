@@ -31,6 +31,9 @@ export default function AutoSettingsPage() {
     global_prompt: '',
     parallel_mode: false,
     max_parallel_pipelines: 3,
+    memory_enabled: true,
+    knowledge_extraction_interval: 5,
+    max_knowledge_context_chars: 3500,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

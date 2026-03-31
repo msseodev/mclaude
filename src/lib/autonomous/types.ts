@@ -60,6 +60,8 @@ export interface AutoFinding {
   max_retries: number;
   resolved_by_cycle_id: string | null;
   failure_history: string | null;
+  project_path?: string | null;
+  resolution_summary?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -161,6 +163,9 @@ export interface AutoSettings {
   global_prompt: string;         // default: '' (injected into all agents)
   parallel_mode: boolean;           // default: false
   max_parallel_pipelines: number;   // default: 3
+  memory_enabled: boolean;              // default: true
+  knowledge_extraction_interval: number; // default: 5 (cycles)
+  max_knowledge_context_chars: number;   // default: 3500
 }
 
 // --- SSE Event types ---
@@ -247,4 +252,34 @@ export interface ExtractedFinding {
   title: string;
   description: string;
   file_path: string | null;
+}
+
+// --- Memory system types ---
+export type TeamMessageCategory = 'convention' | 'architecture' | 'warning' | 'limitation' | 'pattern';
+
+export interface TeamMessage {
+  id: string;
+  project_path: string;
+  session_id: string | null;
+  cycle_id: string | null;
+  from_agent: string;
+  category: TeamMessageCategory;
+  content: string;
+  created_at: string;
+}
+
+export type KnowledgeCategory = 'architecture_decision' | 'coding_convention' | 'known_limitation' | 'resolved_pattern';
+
+export interface KnowledgeEntry {
+  id: string;
+  project_path: string;
+  category: KnowledgeCategory;
+  title: string;
+  content: string;
+  source_session_id: string | null;
+  source_agent: string | null;
+  occurrence_count: number;
+  last_seen_at: string;
+  created_at: string;
+  superseded_by: string | null;
 }

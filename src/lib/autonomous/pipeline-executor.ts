@@ -13,9 +13,11 @@ import {
 import { GitManager } from './git-manager';
 import { StateManager } from './state-manager';
 import { buildAgentContext, StructuredAgentOutput } from './agent-context-builder';
-import { parseAgentOutput, parseCEORequests } from './output-parser';
+import { parseAgentOutput, parseCEORequests, parseTeamMessages } from './output-parser';
+import { createTeamMessage } from './memory-db';
 import { buildUserPrompt } from './user-prompt-builder';
 import { captureAppScreens } from './screen-capture';
+import { KnowledgeManager } from './knowledge-manager';
 import type {
   AutoAgent,
   AutoSession,
@@ -125,6 +127,7 @@ export class PipelineExecutor {
     });
 
     const globalPrompt = settings.global_prompt || '';
+    const knowledgeManager = new KnowledgeManager(this.session.target_project);
 
     const previousOutputs = new Map<string, string>();
     const structuredOutputs: StructuredAgentOutput[] = [];
@@ -163,6 +166,10 @@ export class PipelineExecutor {
               timestamp: new Date().toISOString(),
             });
 
+            const knowledgeCtx = settings.memory_enabled
+              ? knowledgeManager.buildKnowledgeContext(agent.name, settings.max_knowledge_context_chars)
+              : { knowledge: '', teamMessages: '', wontFixSummary: '' };
+
             const context = buildAgentContext(agent, {
               userPrompt: isPlannerAgent(agent) ? userPromptText : '',
               sessionState: stateContext,
@@ -175,6 +182,9 @@ export class PipelineExecutor {
               ceoRequests,
               pipelineType: this.pipelineType,
               globalPrompt,
+              projectKnowledge: knowledgeCtx.knowledge || undefined,
+              teamMessages: knowledgeCtx.teamMessages || undefined,
+              wontFixSummary: isPlannerAgent(agent) ? (knowledgeCtx.wontFixSummary || undefined) : undefined,
             });
 
             return this.runSingleAgent(agent, context, 1);
@@ -244,6 +254,21 @@ export class PipelineExecutor {
             });
           }
 
+          // Extract team messages from agent output
+          if (settings.memory_enabled) {
+            const teamMsgs = parseTeamMessages(result.agentRun.output);
+            for (const msg of teamMsgs) {
+              createTeamMessage({
+                project_path: this.session.target_project,
+                session_id: this.session.id,
+                cycle_id: this.cycleId,
+                from_agent: agent.display_name,
+                category: msg.category,
+                content: msg.content,
+              });
+            }
+          }
+
           // Emit agent_complete or agent_failed
           this.emit({
             type: result.agentRun.status === 'completed' ? 'agent_complete' : 'agent_failed',
@@ -294,6 +319,10 @@ export class PipelineExecutor {
           }
         }
 
+        const knowledgeCtx = settings.memory_enabled
+          ? knowledgeManager.buildKnowledgeContext(agent.name, settings.max_knowledge_context_chars)
+          : { knowledge: '', teamMessages: '', wontFixSummary: '' };
+
         const context = buildAgentContext(agent, {
           userPrompt: isPlannerAgent(agent) ? userPromptText : '',
           sessionState: stateContext,
@@ -306,6 +335,10 @@ export class PipelineExecutor {
             : undefined,
           ceoRequests,
           pipelineType: this.pipelineType,
+          globalPrompt,
+          projectKnowledge: knowledgeCtx.knowledge || undefined,
+          teamMessages: knowledgeCtx.teamMessages || undefined,
+          wontFixSummary: isPlannerAgent(agent) ? (knowledgeCtx.wontFixSummary || undefined) : undefined,
         });
 
         const result = await this.runSingleAgent(agent, context, 1);
@@ -364,6 +397,21 @@ export class PipelineExecutor {
             data: { request: created },
             timestamp: new Date().toISOString(),
           });
+        }
+
+        // Extract team messages from agent output
+        if (settings.memory_enabled) {
+          const teamMsgs = parseTeamMessages(result.agentRun.output);
+          for (const msg of teamMsgs) {
+            createTeamMessage({
+              project_path: this.session.target_project,
+              session_id: this.session.id,
+              cycle_id: this.cycleId,
+              from_agent: agent.display_name,
+              category: msg.category,
+              content: msg.content,
+            });
+          }
         }
 
         // Emit agent_complete or agent_failed

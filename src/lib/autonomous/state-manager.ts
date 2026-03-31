@@ -20,12 +20,12 @@ export class StateManager {
   /**
    * Write SESSION-STATE.md with current session state.
    */
-  async writeState(session: AutoSession, cycles: AutoCycle[], findings: AutoFinding[], codebaseSummary?: string): Promise<void> {
+  async writeState(session: AutoSession, cycles: AutoCycle[], findings: AutoFinding[], codebaseSummary?: string, knowledgeSummary?: string): Promise<void> {
     // 1. Ensure .mlaude directory exists
     await fs.mkdir(path.join(this.workingDirectory, STATE_DIR), { recursive: true });
 
     // 2. Build markdown content
-    const content = this.buildStateContent(session, cycles, findings, codebaseSummary);
+    const content = this.buildStateContent(session, cycles, findings, codebaseSummary, knowledgeSummary);
 
     // 3. Write file
     await fs.writeFile(this.statePath, content, 'utf-8');
@@ -53,7 +53,7 @@ export class StateManager {
     }
   }
 
-  private buildStateContent(session: AutoSession, cycles: AutoCycle[], findings: AutoFinding[], codebaseSummary?: string): string {
+  private buildStateContent(session: AutoSession, cycles: AutoCycle[], findings: AutoFinding[], codebaseSummary?: string, knowledgeSummary?: string): string {
     const now = new Date().toISOString();
     const openFindings = findings.filter(f => f.status === 'open' || f.status === 'in_progress');
     const resolvedFindings = findings.filter(f => f.status === 'resolved');
@@ -127,6 +127,11 @@ ${codebaseSummary ? codebaseSummary + '\n' : ''}## Current Status
         md += '\n';
       }
       md += '\n';
+    }
+
+    // Project Knowledge (cross-session)
+    if (knowledgeSummary) {
+      md += `## Project Knowledge (Cross-Session)\n${knowledgeSummary}\n\n`;
     }
 
     // Session log

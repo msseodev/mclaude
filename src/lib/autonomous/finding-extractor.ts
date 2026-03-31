@@ -8,7 +8,7 @@ export class FindingExtractor {
    * Extract findings from Claude's output.
    * Looks for a JSON block containing { "findings": [...] }
    */
-  extract(claudeOutput: string, existingFindings?: AutoFinding[]): ExtractedFinding[] {
+  extract(claudeOutput: string, existingFindings?: AutoFinding[], crossSessionFindings?: AutoFinding[]): ExtractedFinding[] {
     const jsonBlock = this.extractJsonBlock(claudeOutput);
     if (!jsonBlock) return [];
 
@@ -40,7 +40,8 @@ export class FindingExtractor {
       return rawFindings
         .map((f: Record<string, unknown>) => this.validateFinding(f))
         .filter((f: ExtractedFinding | null): f is ExtractedFinding => f !== null)
-        .filter((f: ExtractedFinding) => !this.isDuplicate(f, existingFindings ?? []));
+        .filter((f: ExtractedFinding) => !this.isDuplicate(f, existingFindings ?? []))
+        .filter((f: ExtractedFinding) => !this.isDuplicateOfCrossSession(f, crossSessionFindings ?? []));
     } catch {
       return [];
     }
@@ -100,6 +101,19 @@ export class FindingExtractor {
   private isDuplicate(finding: ExtractedFinding, existing: AutoFinding[]): boolean {
     const normalizedTitle = finding.title.toLowerCase().trim();
     return existing.some(e => {
+      const existingTitle = e.title.toLowerCase().trim();
+      return existingTitle === normalizedTitle ||
+             this.similarity(existingTitle, normalizedTitle) > 0.8;
+    });
+  }
+
+  /**
+   * Check if a finding is a duplicate of a cross-session finding (resolved or wont_fix).
+   * Uses the same title similarity check as isDuplicate().
+   */
+  private isDuplicateOfCrossSession(finding: ExtractedFinding, crossSessionFindings: AutoFinding[]): boolean {
+    const normalizedTitle = finding.title.toLowerCase().trim();
+    return crossSessionFindings.some(e => {
       const existingTitle = e.title.toLowerCase().trim();
       return existingTitle === normalizedTitle ||
              this.similarity(existingTitle, normalizedTitle) > 0.8;

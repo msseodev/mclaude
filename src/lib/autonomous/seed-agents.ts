@@ -277,7 +277,13 @@ After writing the spec file, you MUST also output in the following JSON format:
       "reason": "Reason for deferral"
     }
   ]
-}`,
+}
+
+### Team Messages
+중요한 아키텍처 결정을 팀에 공유하세요:
+\`\`\`json
+{ "team_messages": [{ "category": "architecture", "content": "설명" }] }
+\`\`\``,
     pipeline_order: 0.5,
   },
   {
@@ -309,7 +315,13 @@ If you encounter a situation where the Feature Spec is unclear, contradictory, o
 BLOCKER: [description of the issue and what needs to change in the spec]
 
 The Planning Moderator (or Product Designer) will receive this feedback and revise the spec.
-Do NOT output a BLOCKER if you can reasonably implement the feature. Only use it for genuine implementation blockers related to the spec.`,
+Do NOT output a BLOCKER if you can reasonably implement the feature. Only use it for genuine implementation blockers related to the spec.
+
+### Team Messages
+구현 중 발견한 주요 패턴이나 주의사항이 있으면 팀에 공유하세요:
+\`\`\`json
+{ "team_messages": [{ "category": "pattern", "content": "설명" }] }
+\`\`\``,
     pipeline_order: 1,
   },
   {
@@ -393,7 +405,13 @@ You MUST output in the following JSON format:
 }
 
 - approved: true -> proceed to QA
-- approved: false + critical/major issues -> Developer will re-run with your feedback`,
+- approved: false + critical/major issues -> Developer will re-run with your feedback
+
+### Team Messages
+반복적으로 발견되는 코딩 컨벤션이나 패턴이 있으면 팀에 공유하세요:
+\`\`\`json
+{ "team_messages": [{ "category": "convention", "content": "설명" }] }
+\`\`\``,
     pipeline_order: 2,
   },
   {

@@ -36,8 +36,12 @@ import {
   getAutoAgentRunsByCycle,
 } from './db';
 import { FindingExtractor } from './finding-extractor';
+import { getCrossSessionFindings } from './memory-db';
 import { GitManager } from './git-manager';
 import { StateManager } from './state-manager';
+import { KnowledgeManager } from './knowledge-manager';
+import { KnowledgeExtractor } from './knowledge-extractor';
+import { parseAgentOutput } from './output-parser';
 import { CodebaseScanner } from './codebase-scanner';
 import type {
   AutoSSEEvent,
@@ -607,7 +611,8 @@ class CycleEngineImpl {
     if (designerRun?.output) {
       const extractor = new FindingExtractor();
       const existingFindings = getAutoFindings({ session_id: this.currentSessionId });
-      const newFindings = extractor.extract(designerRun.output, existingFindings);
+      const crossSessionFindings = getCrossSessionFindings(session.target_project, ['resolved', 'wont_fix']);
+      const newFindings = extractor.extract(designerRun.output, existingFindings, crossSessionFindings);
       for (const f of newFindings) {
         const created = createAutoFinding({
           session_id: this.currentSessionId,
@@ -663,9 +668,12 @@ class CycleEngineImpl {
 
     // Mark finding resolved on success
     if (result.success && findingToFix) {
+      const devRun = result.agentRuns.find(r => r.agent_name === 'Developer');
+      const resolutionSummary = devRun?.output?.slice(0, 500) || '';
       updateAutoFinding(findingToFix.id, {
         status: 'resolved',
         resolved_by_cycle_id: cycle.id,
+        resolution_summary: resolutionSummary,
       });
       this.emit({
         type: 'finding_resolved',
@@ -798,6 +806,52 @@ class CycleEngineImpl {
     this.currentCycleId = null;
     this.currentFindingId = null;
     this.executor = null;
+
+    // Knowledge extraction (after cycle completion, before next cycle)
+    if (settings.memory_enabled) {
+      try {
+        const knowledgeExtractor = new KnowledgeExtractor();
+        const knowledgeManager = new KnowledgeManager(session.target_project);
+
+        // Extract from wont_fix findings
+        if (!result.success && findingToFix) {
+          const updatedFinding = getAutoFinding(findingToFix.id);
+          if (updatedFinding && updatedFinding.status === 'wont_fix') {
+            const limitation = knowledgeExtractor.extractFromWontFix(updatedFinding);
+            if (limitation) {
+              knowledgeManager.upsertKnowledge(limitation);
+            }
+          }
+        }
+
+        // Extract from resolved findings
+        if (result.success && findingToFix) {
+          const devRun = result.agentRuns.find(r => r.agent_name === 'Developer');
+          const pattern = knowledgeExtractor.extractFromResolvedCycle(findingToFix, devRun?.output || '');
+          if (pattern) {
+            knowledgeManager.upsertKnowledge(pattern);
+          }
+        }
+
+        // Extract conventions from Reviewer
+        const reviewerRun = result.agentRuns.find(r => r.agent_name === 'Reviewer');
+        if (reviewerRun && reviewerRun.output) {
+          const parsed = parseAgentOutput('reviewer', reviewerRun.output);
+          const conventions = knowledgeExtractor.extractFromReviewerOutput(reviewerRun.output, parsed.structuredData);
+          for (const c of conventions) {
+            knowledgeManager.upsertKnowledge(c);
+          }
+        }
+
+        // Periodic knowledge file sync
+        if (this.cycleNumber > 0 && this.cycleNumber % settings.knowledge_extraction_interval === 0) {
+          await knowledgeManager.syncKnowledgeFile();
+        }
+      } catch (error) {
+        // Knowledge extraction is non-critical — don't break the cycle loop
+        console.error('Knowledge extraction failed:', error);
+      }
+    }
 
     // Write SESSION-STATE.md
     this.updateStateFile();
@@ -1238,7 +1292,21 @@ class CycleEngineImpl {
       const cycles = getAutoCyclesBySession(this.currentSessionId);
       const findings = getAutoFindings({ session_id: this.currentSessionId });
       const stateManager = new StateManager(session.target_project);
-      await stateManager.writeState(session, cycles, findings, this.codebaseSummaryCache ?? undefined);
+
+      // Build knowledge summary for STATE file
+      let knowledgeSummary: string | undefined;
+      const settings = getAllAutoSettings();
+      if (settings.memory_enabled) {
+        try {
+          const km = new KnowledgeManager(session.target_project);
+          const ctx = km.buildKnowledgeContext('system', 1000);
+          knowledgeSummary = ctx.knowledge || undefined;
+        } catch {
+          // Knowledge manager not critical for state file
+        }
+      }
+
+      await stateManager.writeState(session, cycles, findings, this.codebaseSummaryCache ?? undefined, knowledgeSummary);
     } catch {
       // Don't fail the cycle if state file write fails
     }

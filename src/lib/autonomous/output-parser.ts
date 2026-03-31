@@ -1,4 +1,4 @@
-import type { CEORequestType } from './types';
+import type { CEORequestType, TeamMessageCategory } from './types';
 
 export interface ParsedAgentOutput {
   structuredData: Record<string, unknown> | null;
@@ -293,6 +293,103 @@ function extractCEORequestsFromObject(obj: Record<string, unknown>): ParsedCEORe
   // Singular form: { "ceo_request": {...} }
   if (obj.ceo_request && typeof obj.ceo_request === 'object' && !Array.isArray(obj.ceo_request)) {
     const parsed = parseSingleCEORequest(obj.ceo_request as Record<string, unknown>);
+    if (parsed) results.push(parsed);
+  }
+
+  return results;
+}
+
+// --- Team message parsing ---
+
+export interface ParsedTeamMessage {
+  category: TeamMessageCategory;
+  content: string;
+}
+
+const VALID_TEAM_MESSAGE_CATEGORIES = new Set(['convention', 'architecture', 'warning', 'limitation', 'pattern']);
+
+function isValidTeamMessageCategory(value: unknown): value is TeamMessageCategory {
+  return typeof value === 'string' && VALID_TEAM_MESSAGE_CATEGORIES.has(value);
+}
+
+function parseSingleTeamMessage(obj: Record<string, unknown>): ParsedTeamMessage | null {
+  if (!obj || typeof obj !== 'object') return null;
+  const category = obj.category;
+  const content = obj.content;
+  if (!isValidTeamMessageCategory(category)) return null;
+  if (typeof content !== 'string' || !content.trim()) return null;
+  return { category, content: content.trim() };
+}
+
+export function parseTeamMessages(output: string): ParsedTeamMessage[] {
+  const results: ParsedTeamMessage[] = [];
+
+  // Try code block first: ```json ... ```
+  const codeBlockMatches = output.matchAll(/```json\s*\n([\s\S]*?)\n```/g);
+  for (const m of codeBlockMatches) {
+    try {
+      const parsed = JSON.parse(m[1]);
+      if (parsed && typeof parsed === 'object') {
+        const extracted = extractTeamMessagesFromObject(parsed);
+        results.push(...extracted);
+      }
+    } catch { /* continue */ }
+  }
+
+  if (results.length > 0) return results;
+
+  // Fall back to balanced-brace extraction for raw JSON with team_message(s) keys
+  const keys = ['team_messages', 'team_message'];
+  for (const key of keys) {
+    const keyIndex = output.indexOf(`"${key}"`);
+    if (keyIndex === -1) continue;
+
+    // Walk backwards to find the opening brace
+    let startIdx = -1;
+    for (let i = keyIndex - 1; i >= 0; i--) {
+      if (output[i] === '{') { startIdx = i; break; }
+    }
+    if (startIdx === -1) continue;
+
+    // Walk forward with balanced braces from startIdx
+    let depth = 0;
+    let endIdx = -1;
+    for (let i = startIdx; i < output.length; i++) {
+      if (output[i] === '{') depth++;
+      else if (output[i] === '}') {
+        depth--;
+        if (depth === 0) { endIdx = i; break; }
+      }
+    }
+    if (endIdx === -1) continue;
+
+    try {
+      const parsed = JSON.parse(output.slice(startIdx, endIdx + 1));
+      const extracted = extractTeamMessagesFromObject(parsed);
+      results.push(...extracted);
+    } catch { /* try next key */ }
+    if (results.length > 0) return results;
+  }
+
+  return results;
+}
+
+function extractTeamMessagesFromObject(obj: Record<string, unknown>): ParsedTeamMessage[] {
+  const results: ParsedTeamMessage[] = [];
+
+  // Array form: { "team_messages": [...] }
+  if (Array.isArray(obj.team_messages)) {
+    for (const item of obj.team_messages) {
+      if (item && typeof item === 'object') {
+        const parsed = parseSingleTeamMessage(item as Record<string, unknown>);
+        if (parsed) results.push(parsed);
+      }
+    }
+  }
+
+  // Singular form: { "team_message": {...} }
+  if (obj.team_message && typeof obj.team_message === 'object' && !Array.isArray(obj.team_message)) {
+    const parsed = parseSingleTeamMessage(obj.team_message as Record<string, unknown>);
     if (parsed) results.push(parsed);
   }
 
