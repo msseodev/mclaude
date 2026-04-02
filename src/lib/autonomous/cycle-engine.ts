@@ -26,6 +26,7 @@ import {
   createAutoFinding,
   getAutoFinding,
   updateAutoFinding,
+  getAutoFindingCounts,
   getAutoFindings,
   getOpenAutoFindings,
   getAllAutoSettings,
@@ -343,9 +344,7 @@ class CycleEngineImpl {
     }
 
     const session = getAutoSession(this.currentSessionId);
-    const allFindings = getAutoFindings({ session_id: this.currentSessionId });
-    const openFindings = allFindings.filter(f => f.status === 'open' || f.status === 'in_progress');
-    const resolvedFindings = allFindings.filter(f => f.status === 'resolved');
+    const findingCounts = getAutoFindingCounts(this.currentSessionId);
 
     let currentFinding: { id: string; title: string } | null = null;
     if (this.currentFindingId) {
@@ -377,7 +376,7 @@ class CycleEngineImpl {
             currentAgent = { id: runningRun.agent_id, name: runningRun.agent_name };
           }
         }
-      } catch { /* ignore */ }
+      } catch (err) { console.warn('[auto] Failed to load pipeline agents for status:', err); }
     }
 
     return {
@@ -389,9 +388,9 @@ class CycleEngineImpl {
       stats: {
         totalCycles: session?.total_cycles ?? 0,
         totalCostUsd: session?.total_cost_usd ?? 0,
-        findingsTotal: allFindings.length,
-        findingsResolved: resolvedFindings.length,
-        findingsOpen: openFindings.length,
+        findingsTotal: findingCounts.total,
+        findingsResolved: findingCounts.resolved,
+        findingsOpen: findingCounts.open,
         testPassRate: null, // Could compute from recent test cycles
       },
       currentAgent,
@@ -1300,14 +1299,14 @@ class CycleEngineImpl {
           const km = new KnowledgeManager(session.target_project);
           const ctx = km.buildKnowledgeContext('system', 1000);
           knowledgeSummary = ctx.knowledge || undefined;
-        } catch {
-          // Knowledge manager not critical for state file
+        } catch (err) {
+          console.warn('[auto] Knowledge context build failed:', err);
         }
       }
 
       await stateManager.writeState(session, cycles, findings, this.codebaseSummaryCache ?? undefined, knowledgeSummary);
-    } catch {
-      // Don't fail the cycle if state file write fails
+    } catch (err) {
+      console.warn('[auto] State file write failed:', err);
     }
   }
 }

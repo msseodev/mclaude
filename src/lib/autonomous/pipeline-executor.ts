@@ -66,13 +66,10 @@ interface FeedbackLoopResult {
   abortedByAuthError?: boolean;
 }
 
-// Names of planning agents that should receive screen frames
-const PLANNER_AGENT_NAMES = new Set(['product_designer', 'ux_planner']);
-
-// Planning agents that should receive the user's initial_prompt
-const PLANNER_AGENT_NAME_LIST = ['product_designer', 'ux_planner', 'tech_planner', 'biz_planner', 'planning_moderator'];
-function isPlannerAgent(agent: AutoAgent): boolean {
-  return PLANNER_AGENT_NAME_LIST.includes(agent.name);
+// Planning agents — receive screen frames and initial_prompt
+export const PLANNER_AGENT_NAMES = new Set(['product_designer', 'ux_planner', 'tech_planner', 'biz_planner', 'planning_moderator']);
+export function isPlannerAgent(agent: AutoAgent): boolean {
+  return PLANNER_AGENT_NAMES.has(agent.name);
 }
 
 export class PipelineExecutor {

@@ -54,22 +54,59 @@ export class FindingExtractor {
    * 2. Raw JSON with findings, features, or agreed_items
    */
   private extractJsonBlock(text: string): string | null {
+    // Limit input to prevent regex catastrophe on huge outputs
+    const input = text.length > 100_000 ? text.slice(0, 100_000) : text;
     const knownKeys = ['"findings"', '"features"', '"agreed_items"'];
 
     // Try code block first
-    const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    const codeBlockMatch = input.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (codeBlockMatch) {
       const content = codeBlockMatch[1].trim();
       if (knownKeys.some(key => content.includes(key))) return content;
     }
 
-    // Try raw JSON for each known key
+    // Try raw JSON: find the key, then walk backward to find enclosing {
     for (const key of knownKeys) {
-      const pattern = new RegExp(`\\{[\\s\\S]*${key.replace(/"/g, '"')}[\\s\\S]*\\}`);
-      const jsonMatch = text.match(pattern);
-      if (jsonMatch) return jsonMatch[0];
+      const keyIdx = input.indexOf(key);
+      if (keyIdx === -1) continue;
+      const balanced = this.extractBalancedJson(input, keyIdx);
+      if (balanced) return balanced;
     }
 
+    return null;
+  }
+
+  /**
+   * Extract balanced JSON starting from the given position.
+   */
+  private extractBalancedJson(text: string, startSearch: number): string | null {
+    // Find the opening brace at or before startSearch
+    const openIdx = text.lastIndexOf('{', startSearch);
+    if (openIdx === -1) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = openIdx; i < text.length; i++) {
+      const ch = text[i];
+      if (escape) { escape = false; continue; }
+      if (ch === '\\' && inString) { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          const candidate = text.slice(openIdx, i + 1);
+          try {
+            JSON.parse(candidate);
+            return candidate;
+          } catch {
+            return null;
+          }
+        }
+      }
+    }
     return null;
   }
 

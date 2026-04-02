@@ -1,4 +1,4 @@
-import { spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { PipelineExecutor } from './pipeline-executor';
 import type { PipelineResult } from './pipeline-executor';
 import { GitManager } from './git-manager';
@@ -304,18 +304,35 @@ export class WorkerPool {
       ].join('\n');
 
       const claudeBinary = getSetting('claude_binary') || 'claude';
-      const result = spawnSync(claudeBinary, ['--print', '--dangerously-skip-permissions'], {
-        input: prompt,
-        cwd: this.session.target_project,
-        encoding: 'utf-8',
-        timeout: 120_000,
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        const proc = spawn(claudeBinary, ['--print', '--dangerously-skip-permissions'], {
+          cwd: this.session.target_project,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        proc.stdin?.write(prompt);
+        proc.stdin?.end();
+
+        const timeout = setTimeout(() => {
+          proc.kill('SIGTERM');
+          reject(new Error('Conflict resolution timed out after 60s'));
+        }, 60_000);
+
+        proc.on('close', (code) => {
+          clearTimeout(timeout);
+          resolve(code);
+        });
+        proc.on('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
       });
 
-      if (result.status !== 0) return false;
+      if (exitCode !== 0) return false;
 
       // Complete the merge
       return await gitManager.completeMerge(`merge: resolve conflicts for ${task.finding.title}`);
-    } catch {
+    } catch (err) {
+      console.warn('[parallel] Conflict resolution failed:', err);
       return false;
     }
   }

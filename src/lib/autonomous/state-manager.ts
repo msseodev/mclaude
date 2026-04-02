@@ -27,8 +27,10 @@ export class StateManager {
     // 2. Build markdown content
     const content = this.buildStateContent(session, cycles, findings, codebaseSummary, knowledgeSummary);
 
-    // 3. Write file
-    await fs.writeFile(this.statePath, content, 'utf-8');
+    // 3. Write atomically: temp file then rename
+    const tmpPath = this.statePath + '.tmp';
+    await fs.writeFile(tmpPath, content, 'utf-8');
+    await fs.rename(tmpPath, this.statePath);
   }
 
   /**

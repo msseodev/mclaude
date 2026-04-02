@@ -404,6 +404,11 @@ export function updateAutoCycle(id: string, data: Partial<Pick<AutoCycle, 'statu
 
   const status = data.status ?? existing.status;
   const output = data.output ?? existing.output;
+  // Cap output at 50KB to prevent unbounded growth
+  const MAX_OUTPUT_SIZE = 50_000;
+  const cappedOutput = output.length > MAX_OUTPUT_SIZE
+    ? '...(truncated)...\n' + output.slice(-MAX_OUTPUT_SIZE)
+    : output;
   const costUsd = data.cost_usd !== undefined ? data.cost_usd : existing.cost_usd;
   const durationMs = data.duration_ms !== undefined ? data.duration_ms : existing.duration_ms;
   const completedAt = data.completed_at !== undefined ? data.completed_at : existing.completed_at;
@@ -417,7 +422,7 @@ export function updateAutoCycle(id: string, data: Partial<Pick<AutoCycle, 'statu
 
   db.prepare(
     'UPDATE auto_cycles SET status = ?, output = ?, cost_usd = ?, duration_ms = ?, completed_at = ?, test_pass_count = ?, test_fail_count = ?, test_total_count = ?, build_passed = ?, lint_passed = ?, composite_score = ?, score_breakdown = ? WHERE id = ?'
-  ).run(status, output, costUsd, durationMs, completedAt, testPassCount, testFailCount, testTotalCount, buildPassed, lintPassed, compositeScore, scoreBreakdown, id);
+  ).run(status, cappedOutput, costUsd, durationMs, completedAt, testPassCount, testFailCount, testTotalCount, buildPassed, lintPassed, compositeScore, scoreBreakdown, id);
 
   return getAutoCycle(id);
 }
@@ -523,6 +528,22 @@ export function getAutoFindings(
   return db.prepare(
     `SELECT * FROM auto_findings ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
   ).all(...params) as AutoFinding[];
+}
+
+export function getAutoFindingCounts(sessionId: string): { total: number; open: number; resolved: number } {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN status IN ('open', 'in_progress') THEN 1 ELSE 0 END) as open,
+      SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved
+    FROM auto_findings WHERE session_id = ?
+  `).get(sessionId) as { total: number; open: number; resolved: number };
+  return {
+    total: row.total ?? 0,
+    open: row.open ?? 0,
+    resolved: row.resolved ?? 0,
+  };
 }
 
 export function getOpenAutoFindings(): AutoFinding[] {
@@ -713,10 +734,15 @@ export function updateAutoAgentRun(id: string, data: Partial<Pick<AutoAgentRun, 
   if (!existing) return undefined;
   const status = data.status ?? existing.status;
   const output = data.output ?? existing.output;
+  // Cap output at 50KB to prevent unbounded growth
+  const MAX_OUTPUT_SIZE = 50_000;
+  const cappedOutput = output.length > MAX_OUTPUT_SIZE
+    ? '...(truncated)...\n' + output.slice(-MAX_OUTPUT_SIZE)
+    : output;
   const cost_usd = data.cost_usd !== undefined ? data.cost_usd : existing.cost_usd;
   const duration_ms = data.duration_ms !== undefined ? data.duration_ms : existing.duration_ms;
   const completed_at = data.completed_at !== undefined ? data.completed_at : existing.completed_at;
-  db.prepare('UPDATE auto_agent_runs SET status = ?, output = ?, cost_usd = ?, duration_ms = ?, completed_at = ? WHERE id = ?').run(status, output, cost_usd, duration_ms, completed_at, id);
+  db.prepare('UPDATE auto_agent_runs SET status = ?, output = ?, cost_usd = ?, duration_ms = ?, completed_at = ? WHERE id = ?').run(status, cappedOutput, cost_usd, duration_ms, completed_at, id);
   return db.prepare('SELECT * FROM auto_agent_runs WHERE id = ?').get(id) as AutoAgentRun | undefined;
 }
 

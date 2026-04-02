@@ -13,49 +13,17 @@ Comprehensive review results from 5 parallel analysis agents (2026-04-02).
 
 ---
 
-## HIGH — 1~2주 내 수정 권장
+## HIGH — DONE
 
-### H-1. `getStatus()` N+1 쿼리 패턴
-- **위치**: `cycle-engine.ts:346-348`
-- **문제**: 모든 findings를 로드한 뒤 메모리에서 필터링. 2초마다 호출됨.
-- **수정**: `SELECT status, COUNT(*) FROM auto_findings WHERE session_id = ? GROUP BY status`
+- [x] ~~H-1. `getStatus()` N+1 쿼리 패턴~~ → `getAutoFindingCounts()` SQL 집계 쿼리로 교체
+- [x] ~~H-2. SQLite `busy_timeout` 미설정~~ → `db.pragma('busy_timeout = 5000')` 추가
+- [x] ~~H-3. JSON 추출 regex greedy 패턴~~ → balanced brace extraction + 100KB 제한
+- [x] ~~H-4. Git merge conflict `spawnSync` 블로킹~~ → async `spawn` + 60초 timeout
 
-### H-2. SQLite `busy_timeout` 미설정
-- **위치**: `db.ts`
-- **문제**: write 경합 시 즉시 실패 (retry 없음)
-- **수정**: `db.pragma('busy_timeout = 5000')`
-
-### H-3. JSON 추출 regex greedy 패턴
-- **위치**: `finding-extractor.ts:67-70`
-- **문제**: `/\{[\s\S]*${key}[\s\S]*\}/` — 첫 `{`부터 마지막 `}`까지 매칭
-- **수정**: bounded extraction (100KB 제한) + non-greedy 패턴
-
-### H-4. Git merge conflict 해결 시 `spawnSync` 블로킹
-- **위치**: `parallel-coordinator.ts:314`
-- **문제**: merge lock 내에서 동기 Claude CLI 호출 → 전체 worker pool 블로킹
-- **수정**: async + 30초 timeout
-
-### H-5. Silent catch로 에러 삼킴 (6개소)
-- `parallel-coordinator.ts:208` — worktree 삭제 실패
-- `git-manager.ts:142, 157` — merge abort 실패
-- `cycle-engine.ts:380` — DB 쿼리 실패
-- `cycle-engine.ts:1305` — knowledge context 빌드 실패
-- **수정**: `console.warn()` 또는 이벤트 emit
-
-### H-6. 대형 output DB TEXT 컬럼 무제한 저장
-- **위치**: `auto_cycles.output`, `auto_agent_runs.output`
-- **문제**: 50 cycles × 5 agents × 100KB = 25MB+ 메모리 소비
-- **수정**: 50KB 초과 시 파일시스템 이관, DB에는 경로만 저장
-
-### H-7. `PLANNER_AGENT_NAMES`와 `isPlannerAgent()` 불일치
-- **위치**: `pipeline-executor.ts:70 vs 73-75`
-- **문제**: Planning Moderator가 screen frames를 못 받음
-- **수정**: 두 목록 통일
-
-### H-8. State file write non-atomic
-- **위치**: `state-manager.ts:23-32`
-- **문제**: `fs.writeFile` 중 크래시 시 SESSION-STATE.md 손상
-- **수정**: temp file → rename 패턴
+- [x] ~~H-5. Silent catch로 에러 삼킴~~ → `console.warn()` 로깅 추가 (5개소)
+- [x] ~~H-6. 대형 output DB TEXT 무제한 저장~~ → 50KB cap + truncation marker
+- [x] ~~H-7. `PLANNER_AGENT_NAMES` 불일치~~ → 단일 Set으로 통일
+- [x] ~~H-8. State file write non-atomic~~ → temp file → rename 패턴
 
 ---
 

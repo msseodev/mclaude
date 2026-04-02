@@ -139,7 +139,7 @@ export class GitManager {
         return { success: false, conflicted: true };
       }
       // Not a conflict, some other git error — abort
-      try { await this.execGit(['merge', '--abort']); } catch { /* ignore */ }
+      try { await this.execGit(['merge', '--abort']); } catch (err) { console.warn('[git] merge --abort failed:', err); }
       return { success: false, conflicted: false };
     }
   }
@@ -154,7 +154,7 @@ export class GitManager {
   }
 
   async abortMerge(): Promise<void> {
-    try { await this.execGit(['merge', '--abort']); } catch { /* ignore */ }
+    try { await this.execGit(['merge', '--abort']); } catch (err) { console.warn('[git] merge --abort failed:', err); }
   }
 
   async completeMerge(message: string): Promise<boolean> {
