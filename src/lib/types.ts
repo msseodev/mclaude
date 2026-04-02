@@ -106,7 +106,7 @@ export interface SSEEvent {
 
 export interface RateLimitInfo {
   detected: boolean;
-  source: 'exit_code' | 'stream_event' | 'text_pattern' | null;
+  source: 'exit_code' | 'stream_event' | 'text_pattern' | 'pre_flight_check' | null;
   message: string | null;
   retryAfterMs: number | null;
 }

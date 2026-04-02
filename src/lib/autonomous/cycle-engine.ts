@@ -43,6 +43,7 @@ import { StateManager } from './state-manager';
 import { KnowledgeManager } from './knowledge-manager';
 import { KnowledgeExtractor } from './knowledge-extractor';
 import { parseAgentOutput } from './output-parser';
+import { checkUsage, getWaitTimeMs } from './usage-checker';
 import { CodebaseScanner } from './codebase-scanner';
 import type {
   AutoSSEEvent,
@@ -396,6 +397,26 @@ class CycleEngineImpl {
 
     const session = getAutoSession(this.currentSessionId);
     if (!session) return;
+
+    // Pre-flight usage check (skip if session key not configured)
+    const preFlightSettings = getAllAutoSettings();
+    if (preFlightSettings.claude_session_key && preFlightSettings.claude_org_id) {
+      try {
+        const usage = await checkUsage(preFlightSettings.claude_session_key, preFlightSettings.claude_org_id);
+        if (usage.utilization >= 90) {
+          const waitMs = usage.resetsAt ? getWaitTimeMs(usage.resetsAt) : BACKOFF_MAX_MS;
+          this.handleRateLimit({
+            detected: true,
+            source: 'pre_flight_check',
+            message: `Usage at ${usage.utilization}% — waiting for reset`,
+            retryAfterMs: waitMs,
+          });
+          return;
+        }
+      } catch {
+        // Non-fatal: if usage check fails, proceed normally
+      }
+    }
 
     if (!this.checkSafetyLimits()) return;
 
