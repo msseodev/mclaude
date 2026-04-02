@@ -7,6 +7,7 @@ import { useRunStatus } from '@/hooks/useRunStatus';
 import { Button } from '@/components/ui/Button';
 import { Badge, statusBadgeVariant } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
+import { MarkdownOutput } from '@/components/auto/MarkdownOutput';
 import type { SSEEvent, SessionStatus, Plan, PlanWithItems } from '@/types';
 
 const MAX_OUTPUT_ENTRIES = 10000;
@@ -600,11 +601,15 @@ function OutputViewer({
           Output will appear here when the queue is running...
         </p>
       ) : (
-        entries.map((entry, i) => (
-          <span key={i} className={colorForType(entry.type)}>
-            {entry.text}
-          </span>
-        ))
+        entries.map((entry, i) =>
+          entry.type === 'text' ? (
+            <MarkdownOutput key={i} text={entry.text} />
+          ) : (
+            <span key={i} className={colorForType(entry.type)}>
+              {entry.text}
+            </span>
+          ),
+        )
       )}
     </div>
   );

@@ -9,6 +9,7 @@ export interface Prompt {
   queue_order: number;
   status: PromptStatus;
   working_directory: string | null;
+  model: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -32,12 +32,13 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { title, content, working_directory } = body;
+    const { title, content, working_directory, model } = body;
 
     const updated = updatePrompt(id, {
       title,
       content,
       working_directory,
+      model,
     });
     return NextResponse.json(updated);
   } catch (error) {

@@ -21,7 +21,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { title, content, working_directory } = body;
+    const { title, content, working_directory, model } = body;
 
     if (!title || !content) {
       return NextResponse.json(
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const prompt = createPrompt(title, content, working_directory ?? null);
+    const prompt = createPrompt(title, content, working_directory ?? null, model ?? null);
     return NextResponse.json(prompt, { status: 201 });
   } catch (error) {
     return NextResponse.json(

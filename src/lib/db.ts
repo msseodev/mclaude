@@ -110,6 +110,11 @@ function initDb(): Database.Database {
     db.exec('ALTER TABLE run_sessions ADD COLUMN plan_id TEXT');
   }
 
+  const promptCols = db.prepare("PRAGMA table_info(prompts)").all() as Array<{ name: string }>;
+  if (!promptCols.some(c => c.name === 'model')) {
+    db.exec('ALTER TABLE prompts ADD COLUMN model TEXT');
+  }
+
   const executionCols = db.prepare("PRAGMA table_info(executions)").all() as Array<{ name: string }>;
   if (!executionCols.some(c => c.name === 'plan_id')) {
     db.exec('ALTER TABLE executions ADD COLUMN plan_id TEXT');
@@ -166,7 +171,7 @@ export function getPrompt(id: string): Prompt | undefined {
   return db.prepare('SELECT * FROM prompts WHERE id = ?').get(id) as Prompt | undefined;
 }
 
-export function createPrompt(title: string, content: string, working_directory?: string | null): Prompt {
+export function createPrompt(title: string, content: string, working_directory?: string | null, model?: string | null): Prompt {
   const db = getDb();
   const id = uuidv4();
   const now = new Date().toISOString();
@@ -174,13 +179,13 @@ export function createPrompt(title: string, content: string, working_directory?:
   const queueOrder = maxOrder.max_order + 1;
 
   db.prepare(
-    'INSERT INTO prompts (id, title, content, queue_order, status, working_directory, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, title, content, queueOrder, 'pending', working_directory ?? null, now, now);
+    'INSERT INTO prompts (id, title, content, queue_order, status, working_directory, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, title, content, queueOrder, 'pending', working_directory ?? null, model ?? null, now, now);
 
   return getPrompt(id)!;
 }
 
-export function updatePrompt(id: string, data: Partial<Pick<Prompt, 'title' | 'content' | 'status' | 'working_directory'>>): Prompt | undefined {
+export function updatePrompt(id: string, data: Partial<Pick<Prompt, 'title' | 'content' | 'status' | 'working_directory' | 'model'>>): Prompt | undefined {
   const db = getDb();
   const existing = getPrompt(id);
   if (!existing) return undefined;
@@ -190,10 +195,11 @@ export function updatePrompt(id: string, data: Partial<Pick<Prompt, 'title' | 'c
   const content = data.content ?? existing.content;
   const status = data.status ?? existing.status;
   const workingDirectory = data.working_directory !== undefined ? data.working_directory : existing.working_directory;
+  const model = data.model !== undefined ? data.model : existing.model;
 
   db.prepare(
-    'UPDATE prompts SET title = ?, content = ?, status = ?, working_directory = ?, updated_at = ? WHERE id = ?'
-  ).run(title, content, status, workingDirectory, now, id);
+    'UPDATE prompts SET title = ?, content = ?, status = ?, working_directory = ?, model = ?, updated_at = ? WHERE id = ?'
+  ).run(title, content, status, workingDirectory, model, now, id);
 
   return getPrompt(id);
 }

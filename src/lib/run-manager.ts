@@ -248,7 +248,7 @@ class RunManagerImpl {
       },
     );
 
-    this.executor.execute(nextPrompt.content, workingDirectory);
+    this.executor.execute(nextPrompt.content, workingDirectory, nextPrompt.model || undefined);
   }
 
   private processNextPlanItem(): void {
@@ -341,7 +341,7 @@ class RunManagerImpl {
       },
     );
 
-    this.executor.execute(effectivePrompt, workingDirectory);
+    this.executor.execute(effectivePrompt, workingDirectory, prompt.model || undefined);
   }
 
   private handlePromptComplete(result: { cost_usd: number | null; duration_ms: number | null; output: string; isError: boolean; isAuthError: boolean }): void {

@@ -15,6 +15,7 @@ interface PromptFormData {
   title: string;
   content: string;
   working_directory: string;
+  model: string;
 }
 
 interface PlanGroup {
@@ -23,7 +24,14 @@ interface PlanGroup {
   prompts: PromptWithPlans[];
 }
 
-const emptyForm: PromptFormData = { title: '', content: '', working_directory: '' };
+const MODEL_OPTIONS = [
+  { value: '', label: 'Default' },
+  { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+];
+
+const emptyForm: PromptFormData = { title: '', content: '', working_directory: '', model: '' };
 
 export default function PromptsPage() {
   const { showToast } = useToast();
@@ -117,6 +125,7 @@ export default function PromptsPage() {
       title: prompt.title,
       content: prompt.content,
       working_directory: prompt.working_directory ?? '',
+      model: prompt.model ?? '',
     });
     setFormErrors({});
     setModalOpen(true);
@@ -137,6 +146,7 @@ export default function PromptsPage() {
         title: form.title.trim(),
         content: form.content.trim(),
         working_directory: form.working_directory.trim() || null,
+        model: form.model || null,
       };
 
       let res: Response;
@@ -280,6 +290,11 @@ export default function PromptsPage() {
                             <Badge variant={statusBadgeVariant(prompt.status)}>
                               {prompt.status}
                             </Badge>
+                            {prompt.model && (
+                              <Badge variant="purple">
+                                {MODEL_OPTIONS.find(m => m.value === prompt.model)?.label || prompt.model}
+                              </Badge>
+                            )}
                           </div>
                           <p className="mb-1 line-clamp-2 text-sm text-gray-500 dark:text-gray-400">
                             {prompt.content}
@@ -381,6 +396,23 @@ export default function PromptsPage() {
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               placeholder="/path/to/project"
             />
+          </div>
+          <div>
+            <label htmlFor="prompt-model" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Model (optional)
+            </label>
+            <select
+              id="prompt-model"
+              value={form.model}
+              onChange={(e) => setForm({ ...form, model: e.target.value })}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            >
+              {MODEL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </Modal>
