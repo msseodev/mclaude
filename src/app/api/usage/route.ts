@@ -16,6 +16,9 @@ export async function GET() {
       configured: true,
       utilization: usage.utilization,
       resetsAt: usage.resetsAt?.toISOString() ?? null,
+      fiveHour: usage.fiveHour ? { utilization: usage.fiveHour.utilization, resetsAt: usage.fiveHour.resetsAt?.toISOString() ?? null } : null,
+      sevenDay: usage.sevenDay ? { utilization: usage.sevenDay.utilization, resetsAt: usage.sevenDay.resetsAt?.toISOString() ?? null } : null,
+      sevenDaySonnet: usage.sevenDaySonnet ? { utilization: usage.sevenDaySonnet.utilization, resetsAt: usage.sevenDaySonnet.resetsAt?.toISOString() ?? null } : null,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

@@ -3,9 +3,18 @@ import { writeFile, unlink } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 
-export interface UsageResult {
+export interface UsageBucket {
   utilization: number;
   resetsAt: Date | null;
+}
+
+export interface UsageResult {
+  /** Highest utilization across all buckets — use this for threshold checks */
+  utilization: number;
+  resetsAt: Date | null;
+  fiveHour: UsageBucket | null;
+  sevenDay: UsageBucket | null;
+  sevenDaySonnet: UsageBucket | null;
 }
 
 const BUFFER_MS = 60 * 1000; // 60 seconds
@@ -44,16 +53,40 @@ export async function checkUsage(sessionKey: string, orgId: string): Promise<Usa
       proc.unref();
     });
 
-    // Parse output: "85|2026-04-03T02:00:00.000Z" or "85|"
-    const [utilStr, resetsAtStr] = output.split('|');
-    const utilization = parseInt(utilStr, 10);
-    if (isNaN(utilization)) {
-      throw new Error(`Unexpected usage output: ${output}`);
+    // Parse JSON output from Swift script
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(output);
+    } catch {
+      // Legacy format fallback: "85|2026-04-03T02:00:00.000Z"
+      const [utilStr, resetsAtStr] = output.split('|');
+      const utilization = parseInt(utilStr, 10);
+      if (isNaN(utilization)) throw new Error(`Unexpected usage output: ${output}`);
+      return { utilization, resetsAt: resetsAtStr ? new Date(resetsAtStr) : null, fiveHour: null, sevenDay: null, sevenDaySonnet: null };
     }
 
+    const parseBucket = (key: string): UsageBucket | null => {
+      const b = parsed[key] as Record<string, unknown> | null | undefined;
+      if (!b || typeof b.utilization !== 'number') return null;
+      return { utilization: b.utilization, resetsAt: b.resets_at ? new Date(b.resets_at as string) : null };
+    };
+
+    const fiveHour = parseBucket('five_hour');
+    const sevenDay = parseBucket('seven_day');
+    const sevenDaySonnet = parseBucket('seven_day_sonnet');
+
+    // Use highest utilization across all buckets
+    const buckets = [fiveHour, sevenDay, sevenDaySonnet].filter((b): b is UsageBucket => b !== null);
+    if (buckets.length === 0) throw new Error('No usage buckets found in response');
+
+    const worst = buckets.reduce((a, b) => a.utilization >= b.utilization ? a : b);
+
     return {
-      utilization,
-      resetsAt: resetsAtStr ? new Date(resetsAtStr) : null,
+      utilization: worst.utilization,
+      resetsAt: worst.resetsAt,
+      fiveHour,
+      sevenDay,
+      sevenDaySonnet,
     };
   } finally {
     await unlink(tmpPath).catch(() => {});
@@ -61,38 +94,28 @@ export async function checkUsage(sessionKey: string, orgId: string): Promise<Usa
 }
 
 function generateSwiftScript(sessionKey: string, orgId: string): string {
-  // Escape backslashes and quotes for Swift string literals
   const escKey = sessionKey.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const escOrg = orgId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
   return `#!/usr/bin/env swift
 import Foundation
-func fetchUsage() async throws -> (Int, String?) {
-    guard let url = URL(string: "https://claude.ai/api/organizations/${escOrg}/usage") else {
-        throw NSError(domain: "URL", code: 0)
-    }
-    var req = URLRequest(url: url)
-    req.setValue("sessionKey=${escKey}", forHTTPHeaderField: "Cookie")
-    req.setValue("application/json", forHTTPHeaderField: "Accept")
-    let (data, response) = try await URLSession.shared.data(for: req)
-    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-        throw NSError(domain: "HTTP", code: (response as? HTTPURLResponse)?.statusCode ?? 0)
-    }
-    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let fh = json["five_hour"] as? [String: Any],
-          let util = fh["utilization"] as? Int else {
-        throw NSError(domain: "Parse", code: 0)
-    }
-    return (util, fh["resets_at"] as? String)
-}
 Task {
     do {
-        let (u, r) = try await fetchUsage()
-        print("\\(u)|\\(r ?? "")")
+        guard let url = URL(string: "https://claude.ai/api/organizations/${escOrg}/usage") else {
+            print("ERROR:Invalid URL"); exit(1)
+        }
+        var req = URLRequest(url: url)
+        req.setValue("sessionKey=${escKey}", forHTTPHeaderField: "Cookie")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            print("ERROR:HTTP \\((response as? HTTPURLResponse)?.statusCode ?? 0)"); exit(1)
+        }
+        // Pass through raw JSON — Node.js will parse all buckets
+        print(String(data: data, encoding: .utf8)!)
         exit(0)
     } catch {
-        print("ERROR:\\(error.localizedDescription)")
-        exit(1)
+        print("ERROR:\\(error.localizedDescription)"); exit(1)
     }
 }
 RunLoop.main.run()
