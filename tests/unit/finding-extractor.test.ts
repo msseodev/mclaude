@@ -224,4 +224,35 @@ describe('FindingExtractor', () => {
       expect(result[0].title).toBe('Truly new finding');
     });
   });
+
+  describe('extract() deduplicates within the same batch', () => {
+    it('should filter out duplicate findings within a single LLM output', () => {
+      const output = makeClaudeOutput([
+        { title: '한국 가요/팝 악보 다운로드 및 E2E 테스트 확장', category: 'improvement' },
+        { title: '한국 가요/팝 악보 다운로드 및 E2E 테스트 확장', category: 'improvement' },
+        { title: '한국 가요/팝 악보 다운로드 및 E2E 테스트 확장', category: 'improvement' },
+      ]);
+      const result = extractor.extract(output);
+      expect(result).toHaveLength(1);
+    });
+
+    it('should keep findings with different titles in the same batch', () => {
+      const output = makeClaudeOutput([
+        { title: 'Fix memory leak in worker pool', category: 'bug' },
+        { title: 'Add accessibility labels to dashboard buttons', category: 'bug' },
+        { title: 'Optimize database query performance for large datasets', category: 'improvement' },
+      ]);
+      const result = extractor.extract(output);
+      expect(result).toHaveLength(3);
+    });
+
+    it('should filter similar titles within batch (Dice > 0.8)', () => {
+      const output = makeClaudeOutput([
+        { title: 'Fix memory leak in worker pool module', category: 'bug' },
+        { title: 'Fix memory leak in the worker pool module', category: 'bug' },
+      ]);
+      const result = extractor.extract(output);
+      expect(result).toHaveLength(1);
+    });
+  });
 });

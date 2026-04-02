@@ -37,11 +37,18 @@ export class FindingExtractor {
         rawFindings = [];
       }
 
-      return rawFindings
+      const validated = rawFindings
         .map((f: Record<string, unknown>) => this.validateFinding(f))
-        .filter((f: ExtractedFinding | null): f is ExtractedFinding => f !== null)
-        .filter((f: ExtractedFinding) => !this.isDuplicate(f, existingFindings ?? []))
-        .filter((f: ExtractedFinding) => !this.isDuplicateOfCrossSession(f, crossSessionFindings ?? []));
+        .filter((f: ExtractedFinding | null): f is ExtractedFinding => f !== null);
+
+      const accepted: ExtractedFinding[] = [];
+      for (const f of validated) {
+        if (this.isDuplicate(f, existingFindings ?? [])) continue;
+        if (this.isDuplicateOfCrossSession(f, crossSessionFindings ?? [])) continue;
+        if (this.isDuplicateOfBatch(f, accepted)) continue;
+        accepted.push(f);
+      }
+      return accepted;
     } catch {
       return [];
     }
@@ -151,6 +158,19 @@ export class FindingExtractor {
   private isDuplicateOfCrossSession(finding: ExtractedFinding, crossSessionFindings: AutoFinding[]): boolean {
     const normalizedTitle = finding.title.toLowerCase().trim();
     return crossSessionFindings.some(e => {
+      const existingTitle = e.title.toLowerCase().trim();
+      return existingTitle === normalizedTitle ||
+             this.similarity(existingTitle, normalizedTitle) > 0.8;
+    });
+  }
+
+  /**
+   * Check if a finding is a duplicate of another finding already accepted in the same batch.
+   * Uses the same title similarity check as isDuplicate().
+   */
+  private isDuplicateOfBatch(finding: ExtractedFinding, accepted: ExtractedFinding[]): boolean {
+    const normalizedTitle = finding.title.toLowerCase().trim();
+    return accepted.some(e => {
       const existingTitle = e.title.toLowerCase().trim();
       return existingTitle === normalizedTitle ||
              this.similarity(existingTitle, normalizedTitle) > 0.8;

@@ -28,6 +28,7 @@ export class WorkerPool {
   public abortedByAuthError = false;
   private cycleCounter: number;
   private activePromises: Map<number, Promise<void>> = new Map();
+  private activeExecutors: Map<number, PipelineExecutor> = new Map();
   private mergeLock: Promise<void> = Promise.resolve();
   private _completedCycles: number = 0;
   private _failedCycles: number = 0;
@@ -68,6 +69,10 @@ export class WorkerPool {
 
   stop(): void {
     this.stopped = true;
+    for (const [, executor] of this.activeExecutors) {
+      executor.abort();
+    }
+    this.activeExecutors.clear();
   }
 
   getStatus(): { workers: Array<{ id: number; active: boolean; findingId: string | null; cycleId: string | null }> } {
@@ -155,6 +160,7 @@ export class WorkerPool {
         pipelineType,
       );
 
+      this.activeExecutors.set(workerId, executor);
       let pipelineResult: PipelineResult | null = null;
       try {
         pipelineResult = await executor.execute();
@@ -176,6 +182,8 @@ export class WorkerPool {
           data: { cycleId: cycle.id, cycleNumber, phase: 'pipeline', parallel: true },
           timestamp: new Date().toISOString(),
         });
+      } finally {
+        this.activeExecutors.delete(workerId);
       }
 
       // 7. Handle result and track success/failure counts
