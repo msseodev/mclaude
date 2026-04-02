@@ -3,9 +3,9 @@ import fs from 'fs/promises';
 import type { KnowledgeEntry, TeamMessage, AutoFinding } from '@/lib/autonomous/types';
 
 // Mock memory-db module
-const mockGetKnowledgeEntries = vi.fn<() => KnowledgeEntry[]>().mockReturnValue([]);
-const mockGetTeamMessages = vi.fn<() => TeamMessage[]>().mockReturnValue([]);
-const mockGetCrossSessionFindings = vi.fn<() => AutoFinding[]>().mockReturnValue([]);
+const mockGetKnowledgeEntries = vi.fn<(...args: unknown[]) => KnowledgeEntry[]>().mockReturnValue([]);
+const mockGetTeamMessages = vi.fn<(...args: unknown[]) => TeamMessage[]>().mockReturnValue([]);
+const mockGetCrossSessionFindings = vi.fn<(...args: unknown[]) => AutoFinding[]>().mockReturnValue([]);
 
 vi.mock('@/lib/autonomous/memory-db', () => ({
   getKnowledgeEntries: (...args: unknown[]) => mockGetKnowledgeEntries(...args),

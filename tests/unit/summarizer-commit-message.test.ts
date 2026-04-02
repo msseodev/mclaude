@@ -43,7 +43,7 @@ describe('generateCommitMessage', () => {
 
   it('does not include [mlaude-auto] in the prompt', async () => {
     const proc = createMockProcess('feat: add user authentication');
-    mockSpawn.mockReturnValue(proc as ReturnType<typeof spawn>);
+    mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
 
     await generateCommitMessage('/usr/local/bin/claude', 'diff content here');
 
@@ -59,7 +59,7 @@ describe('generateCommitMessage', () => {
 
   it('uses conventional commit types in the prompt', async () => {
     const proc = createMockProcess('fix: resolve null pointer');
-    mockSpawn.mockReturnValue(proc as ReturnType<typeof spawn>);
+    mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
 
     await generateCommitMessage('/usr/local/bin/claude', 'diff content');
 
@@ -73,7 +73,7 @@ describe('generateCommitMessage', () => {
 
   it('returns empty string when Claude returns no output', async () => {
     const proc = createMockProcess('');
-    mockSpawn.mockReturnValue(proc as ReturnType<typeof spawn>);
+    mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
 
     const result = await generateCommitMessage('/usr/local/bin/claude', 'some diff');
 
@@ -82,7 +82,7 @@ describe('generateCommitMessage', () => {
 
   it('returns the generated message on success', async () => {
     const proc = createMockProcess('feat: add login page\n\nImplement the user login page with form validation.');
-    mockSpawn.mockReturnValue(proc as ReturnType<typeof spawn>);
+    mockSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
 
     const result = await generateCommitMessage('/usr/local/bin/claude', 'diff here');
 
