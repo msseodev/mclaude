@@ -1,54 +1,80 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getWaitTimeMs, checkUsage } from '@/lib/autonomous/usage-checker';
+import { getWaitTimeMs } from '@/lib/autonomous/usage-checker';
+
+// Mock child_process and fs to avoid actually running Swift
+vi.mock('child_process', () => ({
+  execFile: vi.fn(),
+}));
+vi.mock('fs/promises', () => ({
+  writeFile: vi.fn().mockResolvedValue(undefined),
+  unlink: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { execFile } from 'child_process';
+const mockExecFile = vi.mocked(execFile);
+
+// Import checkUsage after mocks are set up
+import { checkUsage } from '@/lib/autonomous/usage-checker';
+
+function mockSwiftOutput(stdout: string, exitCode = 0) {
+  mockExecFile.mockImplementation((_cmd: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
+    const callback = cb as (err: Error | null, stdout: string, stderr: string) => void;
+    if (exitCode !== 0) {
+      const err = new Error(`Command failed`) as Error & { code: number };
+      err.code = exitCode;
+      callback(err, '', stdout);
+    } else {
+      callback(null, stdout, '');
+    }
+    return { unref: vi.fn() } as unknown as ReturnType<typeof execFile>;
+  });
+}
 
 describe('usage-checker', () => {
   describe('getWaitTimeMs', () => {
     it('returns correct ms with 60s buffer for a future time', () => {
-      const futureDate = new Date(Date.now() + 30 * 60 * 1000); // 30 min from now
+      const futureDate = new Date(Date.now() + 30 * 60 * 1000);
       const waitMs = getWaitTimeMs(futureDate);
-      // Should be ~30 min + 60s buffer
       expect(waitMs).toBeGreaterThan(30 * 60 * 1000);
       expect(waitMs).toBeLessThanOrEqual(30 * 60 * 1000 + 61 * 1000);
     });
 
     it('returns at least 60s for a time in the past', () => {
-      const pastDate = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+      const pastDate = new Date(Date.now() - 10 * 60 * 1000);
       const waitMs = getWaitTimeMs(pastDate);
+      expect(waitMs).toBe(60 * 1000);
+    });
+
+    it('caps at 5 hours for a far-future reset time', () => {
+      const farFuture = new Date(Date.now() + 10 * 60 * 60 * 1000);
+      const waitMs = getWaitTimeMs(farFuture);
+      expect(waitMs).toBe(5 * 60 * 60 * 1000);
+    });
+
+    it('returns 60s for Invalid Date input', () => {
+      const invalidDate = new Date('invalid');
+      const waitMs = getWaitTimeMs(invalidDate);
       expect(waitMs).toBe(60 * 1000);
     });
   });
 
   describe('checkUsage', () => {
     beforeEach(() => {
-      vi.restoreAllMocks();
+      vi.clearAllMocks();
     });
 
-    it('parses valid response JSON', async () => {
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          five_hour: {
-            utilization: 42,
-            resets_at: '2026-04-03T02:00:00.000Z',
-          },
-        }),
-      };
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
-
+    it('parses valid Swift output with resets_at', async () => {
+      mockSwiftOutput('42|2026-04-03T02:00:00.000Z');
       const result = await checkUsage('sk-test', 'org-123');
       expect(result.utilization).toBe(42);
       expect(result.resetsAt).toEqual(new Date('2026-04-03T02:00:00.000Z'));
+    });
 
-      expect(fetch).toHaveBeenCalledWith(
-        'https://claude.ai/api/organizations/org-123/usage',
-        {
-          headers: {
-            'Cookie': 'sessionKey=sk-test',
-            'Accept': 'application/json',
-          },
-        },
-      );
+    it('parses output without resets_at', async () => {
+      mockSwiftOutput('10|');
+      const result = await checkUsage('sk-test', 'org-123');
+      expect(result.utilization).toBe(10);
+      expect(result.resetsAt).toBeNull();
     });
 
     it('throws on invalid orgId with path traversal', async () => {
@@ -63,53 +89,14 @@ describe('usage-checker', () => {
       );
     });
 
-    it('throws on non-ok HTTP response', async () => {
-      const mockResponse = {
-        ok: false,
-        status: 401,
-        json: async () => ({}),
-      };
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
-
-      await expect(checkUsage('sk-test', 'org-123')).rejects.toThrow(
-        'Usage API returned 401',
-      );
+    it('throws when Swift script fails', async () => {
+      mockSwiftOutput('ERROR:something went wrong', 1);
+      await expect(checkUsage('sk-test', 'org-123')).rejects.toThrow();
     });
 
-    it('throws on network error', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
-
-      await expect(checkUsage('sk-test', 'org-123')).rejects.toThrow('Network error');
-    });
-
-    it('throws on unexpected response format', async () => {
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        json: async () => ({ unexpected: true }),
-      };
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
-
-      await expect(checkUsage('sk-test', 'org-123')).rejects.toThrow(
-        'Unexpected usage API response format',
-      );
-    });
-
-    it('returns null resetsAt when not present in response', async () => {
-      const mockResponse = {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          five_hour: {
-            utilization: 10,
-          },
-        }),
-      };
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
-
-      const result = await checkUsage('sk-test', 'org-123');
-      expect(result.utilization).toBe(10);
-      expect(result.resetsAt).toBeNull();
+    it('throws on unexpected output format', async () => {
+      mockSwiftOutput('notanumber|');
+      await expect(checkUsage('sk-test', 'org-123')).rejects.toThrow('Unexpected usage output');
     });
   });
 });

@@ -17,7 +17,8 @@ export async function GET() {
       utilization: usage.utilization,
       resetsAt: usage.resetsAt?.toISOString() ?? null,
     });
-  } catch {
-    return NextResponse.json({ configured: false, error: 'Failed to fetch usage' });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ configured: false, error: message });
   }
 }
