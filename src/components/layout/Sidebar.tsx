@@ -35,6 +35,7 @@ const autoNavItems = [
 const chatNavItems = [
   { href: '/chat', label: 'Chat', icon: MessageSquareIcon },
   { href: '/chat/sessions', label: 'Sessions', icon: ListIcon },
+  { href: '/settings', label: 'Settings', icon: GearIcon },
   { href: '/chat/guide', label: 'Guide', icon: BookOpenIcon },
 ];
 
