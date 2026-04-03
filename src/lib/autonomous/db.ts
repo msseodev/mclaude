@@ -287,7 +287,18 @@ export function initAutoTables(): void {
     );
   `);
 
-  // Crash recovery: fix orphaned running/in_progress states from previous server crashes
+}
+
+let crashRecoveryDone = false;
+
+/**
+ * Run crash recovery once per process lifetime.
+ * Separated from initAutoTables() to prevent HMR re-imports from
+ * killing actively running sessions.
+ */
+export function runCrashRecoveryOnce(): void {
+  if (crashRecoveryDone) return;
+  crashRecoveryDone = true;
   const recovered = recoverOrphanedStates();
   if (recovered.total > 0) {
     console.log(`[auto] Crash recovery: fixed ${recovered.sessions} sessions, ${recovered.cycles} cycles, ${recovered.agentRuns} agent runs, ${recovered.findings} findings`);

@@ -31,6 +31,7 @@ import {
   getOpenAutoFindings,
   getAllAutoSettings,
   initAutoTables,
+  runCrashRecoveryOnce,
   getAutoAgents,
   createAutoUserPrompt,
   getAutoUserPrompts,
@@ -124,8 +125,9 @@ class CycleEngineImpl {
 
     // Note: manual mode and auto mode can run in parallel on different projects
 
-    // Init tables
+    // Init tables + one-time crash recovery
     initAutoTables();
+    runCrashRecoveryOnce();
 
     // Get settings
     const settings = getAllAutoSettings();
